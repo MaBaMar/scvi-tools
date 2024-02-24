@@ -9,6 +9,7 @@ import torch.nn.functional as F
 from torch import logsumexp
 from torch.distributions import Normal
 from torch.distributions import kl_divergence as kl
+from torch.distributions import register_kl
 
 from scvi import REGISTRY_KEYS
 from scvi._types import Tunable
@@ -16,11 +17,19 @@ from scvi.data._constants import ADATA_MINIFY_TYPE
 from scvi.distributions import NegativeBinomial, Poisson, ZeroInflatedNegativeBinomial
 from scvi.module.base import BaseMinifiedModeModuleClass, LossOutput, auto_move_data
 from scvi.nn import DecoderSCVI, Encoder, LinearDecoderSCVI, one_hot
+from scvi.priors.mixofgausprior import MixOfGausPrior
+from scvi.priors.vampprior import VampPrior
+from scvi.priors.sdnormal import StandartNormalPrior
+from scvi.priors.normalflowprior import NormalFlow
 
 torch.backends.cudnn.benchmark = True
 
 logger = logging.getLogger(__name__)
 
+@register_kl(Normal, StandartNormalPrior)
+def kl_normal_normal(p, q):
+    nq = Normal(q.mean, q.logvar)
+    return kl(p,nq)
 
 class VAE(BaseMinifiedModeModuleClass):
     """Variational auto-encoder model.
@@ -111,6 +120,8 @@ class VAE(BaseMinifiedModeModuleClass):
         log_variational: Tunable[bool] = True,
         gene_likelihood: Tunable[Literal["zinb", "nb", "poisson"]] = "zinb",
         latent_distribution: Tunable[Literal["normal", "ln"]] = "normal",
+        prior_distribution: Tunable[Literal["sdnormal", "normal", "mixofgaus", "vamp","normalflow"]] = "sdnormal",
+        prior_kwargs: Optional[dict] = None,
         encode_covariates: Tunable[bool] = False,
         deeply_inject_covariates: Tunable[bool] = True,
         use_batch_norm: Tunable[Literal["encoder", "decoder", "none", "both"]] = "both",
@@ -217,6 +228,18 @@ class VAE(BaseMinifiedModeModuleClass):
             scale_activation="softplus" if use_size_factor_key else "softmax",
             **_extra_decoder_kwargs,
         )
+        self.prior_distribution = prior_distribution
+        prior_kwargs = {} if prior_kwargs is None else prior_kwargs
+        if prior_distribution == "sdnormal":
+            self.prior = StandartNormalPrior(n_latent=n_latent)
+        elif prior_distribution == "mixofgaus":
+            self.prior = MixOfGausPrior(n_latent=n_latent, **prior_kwargs)
+        elif prior_distribution == "vamp":
+            self.prior = VampPrior(n_latent=n_latent, n_input=n_input, encoder=self.z_encoder, **prior_kwargs)
+        elif prior_distribution == "normalflow":
+            self.prior = NormalFlow(n_latent=n_latent, **prior_kwargs)
+        else:
+            raise NotImplementedError(f"{prior_distribution=} is not implemented.")
 
     def _get_inference_input(
         self,
@@ -430,7 +453,8 @@ class VAE(BaseMinifiedModeModuleClass):
                 local_library_log_vars,
             ) = self._compute_local_library_params(batch_index)
             pl = Normal(local_library_log_means, local_library_log_vars.sqrt())
-        pz = Normal(torch.zeros_like(z), torch.ones_like(z))
+        # pz = Normal(torch.zeros_like(z), torch.ones_like(z))
+        pz = self.prior
         return {
             "px": px,
             "pl": pl,
@@ -446,7 +470,15 @@ class VAE(BaseMinifiedModeModuleClass):
     ):
         """Computes the loss function for the model."""
         x = tensors[REGISTRY_KEYS.X_KEY]
-        kl_divergence_z = kl(inference_outputs["qz"], generative_outputs["pz"]).sum(dim=-1)
+        # kl_divergence_z = kl(inference_outputs["qz"], generative_outputs["pz"]).sum(dim=-1) """
+        """ qz: variational posterior, pz: prior """
+        if self.prior_distribution in ["sdnormal","normal"]:
+            kl_divergence_z = kl(inference_outputs["qz"], generative_outputs["pz"]).sum(dim=-1)
+        else:
+            log_q_zx = inference_outputs["qz"].log_prob(inference_outputs["z"])
+            log_p_z = generative_outputs["pz"].log_prob(inference_outputs["z"])
+            kl_divergence_z = (log_q_zx.sum(-1) - log_p_z)
+
         if not self.use_observed_lib_size:
             kl_divergence_l = kl(
                 inference_outputs["ql"],
