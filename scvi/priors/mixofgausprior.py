@@ -3,7 +3,7 @@ from torch.distributions import Normal
 import torch.distributions as dist
 from scvi.priors.base_prior import BasePrior
 import torch.nn.functional as F
-from scvi.autotune._types import Tunable
+from scvi._types import Tunable
 
 
 class MixOfGausPrior(BasePrior):

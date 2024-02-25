@@ -5,7 +5,7 @@ from torch import nn
 from torch.distributions import Normal
 from scvi.nn import Encoder
 from scvi.priors.base_prior import BasePrior
-from scvi.autotune._types import Tunable
+from scvi._types import Tunable
 
 class VampPrior(BasePrior):
     def __init__(self, n_latent: int, n_input: int, encoder: Encoder,
