@@ -79,6 +79,16 @@ class SCVI(
 
         * ``'normal'`` - Normal distribution
         * ``'ln'`` - Logistic normal distribution (Normal(0, I) transformed by softmax)
+    prior_distribution
+        One of:
+
+        * ``'sdnormal'`` - Standard Normal prior distribution
+        * ``'normalflow'`` - Normalflow prior distribution, supports prior_kwargs: ``num_layers``, ``flow``
+        * ``'mixofgaus'`` - Mixture of Gaussian prior distribution, supports prior_kwargs: ``k``
+        * ``'vamp'`` - VAMP prior distribution, supports prior_kwargs: ``n_input``, ``encoder``, ``n_components``, ``n_hidden``
+    **prior_kwargs
+        Additional keywork arguments for :class:`~scvi.priors.normalflowprior.NormalFlow`, :class:`~scvi.priors.vampprior.VampPrior`,
+        :class:`~scvi.priors.sdnormal.StandardNormalPrior`, :class:`~scvi.priors.mixofgausprior.MixOfGausPrior`
     **kwargs
         Additional keyword arguments for :class:`~scvi.module.VAE`.
 
@@ -113,7 +123,7 @@ class SCVI(
         dispersion: Literal["gene", "gene-batch", "gene-label", "gene-cell"] = "gene",
         gene_likelihood: Literal["zinb", "nb", "poisson"] = "zinb",
         latent_distribution: Literal["normal", "ln"] = "normal",
-        prior_distribution: Literal["sdnormal", "normal", "mixofgaus", "vamp"] = "sdnormal",
+        prior_distribution: Literal["sdnormal", "normalflow", "mixofgaus", "vamp"] = "sdnormal",
         prior_kwargs: dict| None = None,
         **kwargs,
     ):
@@ -133,7 +143,8 @@ class SCVI(
             "SCVI model with the following parameters: \n"
             f"n_hidden: {n_hidden}, n_latent: {n_latent}, n_layers: {n_layers}, "
             f"dropout_rate: {dropout_rate}, dispersion: {dispersion}, "
-            f"gene_likelihood: {gene_likelihood}, latent_distribution: {latent_distribution}."
+            f"gene_likelihood: {gene_likelihood}, latent_distribution: {latent_distribution}, "
+            f"prior_distribution: {prior_distribution}, prior_kwargs: {prior_kwargs}."
         )
 
         if self._module_init_on_train:

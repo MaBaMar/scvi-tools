@@ -76,6 +76,16 @@ class VAE(BaseMinifiedModeModuleClass):
 
         * ``'normal'`` - Isotropic normal
         * ``'ln'`` - Logistic normal with normal params N(0, 1)
+    prior_distribution
+        One of:
+
+        * ``'sdnormal'`` - Standard Normal prior distribution
+        * ``'normalflow'`` - Normalflow prior distribution, supports prior_kwargs: ``num_layers``, ``flow``
+        * ``'mixofgaus'`` - Mixture of Gaussian prior distribution, supports prior_kwargs: ``k``
+        * ``'vamp'`` - VAMP prior distribution, supports prior_kwargs: ``n_input``, ``encoder``, ``n_components``, ``n_hidden``
+    **prior_kwargs
+        Additional keywork arguments for :class:`~scvi.priors.normalflowprior.NormalFlow`, :class:`~scvi.priors.vampprior.VampPrior`,
+        :class:`~scvi.priors.sdnormal.StandardNormalPrior`, :class:`~scvi.priors.mixofgausprior.MixOfGausPrior`
     encode_covariates
         Whether to concatenate covariates to expression in encoder
     deeply_inject_covariates
@@ -120,7 +130,7 @@ class VAE(BaseMinifiedModeModuleClass):
         log_variational: Tunable[bool] = True,
         gene_likelihood: Tunable[Literal["zinb", "nb", "poisson"]] = "zinb",
         latent_distribution: Tunable[Literal["normal", "ln"]] = "normal",
-        prior_distribution: Tunable[Literal["sdnormal", "normal", "mixofgaus", "vamp","normalflow"]] = "sdnormal",
+        prior_distribution: Tunable[Literal["sdnormal", "mixofgaus", "vamp", "normalflow"]] = "sdnormal",
         prior_kwargs: Optional[dict] = None,
         encode_covariates: Tunable[bool] = False,
         deeply_inject_covariates: Tunable[bool] = True,
