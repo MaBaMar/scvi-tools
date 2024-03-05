@@ -482,7 +482,7 @@ class VAE(BaseMinifiedModeModuleClass):
         x = tensors[REGISTRY_KEYS.X_KEY]
         # kl_divergence_z = kl(inference_outputs["qz"], generative_outputs["pz"]).sum(dim=-1) """
         """ qz: variational posterior, pz: prior """
-        if self.prior_distribution in ["sdnormal","normal"]:
+        if self.prior_distribution in ["sdnormal","normalflow"]:
             kl_divergence_z = kl(inference_outputs["qz"], generative_outputs["pz"]).sum(dim=-1)
         else:
             log_q_zx = inference_outputs["qz"].log_prob(inference_outputs["z"])
