@@ -98,7 +98,7 @@ class Trainer(TunableMixin, pl.Trainer):
         devices: Optional[Union[list[int], str, int]] = None,
         benchmark: bool = True,
         check_val_every_n_epoch: Optional[int] = None,
-        max_epochs: Tunable[int] = 400,
+        max_epochs: Tunable[int] = 100,
         default_root_dir: Optional[str] = None,
         enable_checkpointing: bool = False,
         checkpointing_monitor: str = "validation_loss",

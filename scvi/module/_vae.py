@@ -482,7 +482,7 @@ class VAE(BaseMinifiedModeModuleClass):
         x = tensors[REGISTRY_KEYS.X_KEY]
         # kl_divergence_z = kl(inference_outputs["qz"], generative_outputs["pz"]).sum(dim=-1) """
         """ qz: variational posterior, pz: prior """
-        if self.prior_distribution in ["sdnormal","normalflow"]:
+        if self.prior_distribution in ["sdnormal","normal"]:
             kl_divergence_z = kl(inference_outputs["qz"], generative_outputs["pz"]).sum(dim=-1)
         else:
             log_q_zx = inference_outputs["qz"].log_prob(inference_outputs["z"])
@@ -606,12 +606,13 @@ class VAE(BaseMinifiedModeModuleClass):
             reconst_loss = losses.dict_sum(losses.reconstruction_loss)
 
             # Log-probabilities
+            """Prior distribution p(z), variational posterior q(z)"""
             p_z = (
-                Normal(torch.zeros_like(qz.loc), torch.ones_like(qz.scale)).log_prob(z).sum(dim=-1)
+                self.prior.log_prob(z).sum(dim=-1)
             )
             p_x_zl = -reconst_loss
             q_z_x = qz.log_prob(z).sum(dim=-1)
-            log_prob_sum = p_z + p_x_zl - q_z_x
+            log_prob_sum = p_z + p_x_zl - q_z_x # log(p(z) * p(x|zl) * q(z|x))
 
             if not self.use_observed_lib_size:
                 (
