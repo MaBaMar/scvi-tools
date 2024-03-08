@@ -27,7 +27,7 @@ torch.backends.cudnn.benchmark = True
 logger = logging.getLogger(__name__)
 
 @register_kl(Normal, StandartNormalPrior)
-def kl_normal_normal(p, q):
+def kl_normalflow_normal(p, q):
     nq = Normal(q.mean, q.logvar)
     return kl(p,nq)
 
