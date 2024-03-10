@@ -338,6 +338,7 @@ class VAE(BaseMinifiedModeModuleClass):
         """High level inference method.
 
         Runs the inference (encoder) model.
+        returns latent variable z, postrior distribution q_z and q_l and library size l 
         """
         x_ = x
         if self.use_observed_lib_size:
@@ -353,6 +354,7 @@ class VAE(BaseMinifiedModeModuleClass):
             categorical_input = torch.split(cat_covs, 1, dim=1)
         else:
             categorical_input = ()
+        # qz is posterior distribution, z is latent variable drawn
         qz, z = self.z_encoder(encoder_input, batch_index, *categorical_input)
         ql = None
         if not self.use_observed_lib_size:
@@ -463,12 +465,12 @@ class VAE(BaseMinifiedModeModuleClass):
                 local_library_log_vars,
             ) = self._compute_local_library_params(batch_index)
             pl = Normal(local_library_log_means, local_library_log_vars.sqrt())
-        # pz = Normal(torch.zeros_like(z), torch.ones_like(z))
+        # pz = Normal(torch.zeros_like(z), torch.ones_like(z)) # ERRONOUS IMPLEMENTATION !!!!!!!!!!!!!!!!!!!
         pz = self.prior
         return {
-            "px": px,
-            "pl": pl,
-            "pz": pz,
+            "px": px, # p(x|z,s,l)
+            "pl": pl, # prior distribution l, one dimensional gaussian
+            "pz": pz, # prior distribution z
         }
 
     def loss(
@@ -482,11 +484,15 @@ class VAE(BaseMinifiedModeModuleClass):
         x = tensors[REGISTRY_KEYS.X_KEY]
         # kl_divergence_z = kl(inference_outputs["qz"], generative_outputs["pz"]).sum(dim=-1) """
         """ qz: variational posterior, pz: prior """
-        if self.prior_distribution in ["sdnormal","normal"]:
+        if self.prior_distribution in ["sdnormaal"]:
+            # closed form KL solution for sdnormal distribution
             kl_divergence_z = kl(inference_outputs["qz"], generative_outputs["pz"]).sum(dim=-1)
         else:
-            log_q_zx = inference_outputs["qz"].log_prob(inference_outputs["z"])
-            log_p_z = generative_outputs["pz"].log_prob(inference_outputs["z"])
+            log_q_zx = inference_outputs["qz"].log_prob(inference_outputs["z"]) # log(q(z|x,s)) for some z
+            log_p_z = generative_outputs["pz"].log_prob(inference_outputs["z"]) # log(p(z)) for some z
+            # KL divergence KL(p,q) is: integral[p(x)(log p(x) - log(q(x)))]
+            # The thing below is a monte carlo approximation of the log_probability value of the data with a SINGLE sample
+            # we assume individual dimensions to be independent (allows us to multiply single dimension distributions, i.e. sum log)
             kl_divergence_z = (log_q_zx.sum(-1) - log_p_z)
 
         if not self.use_observed_lib_size:
