@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 @register_kl(Normal, StandartNormalPrior)
 def kl_normalflow_normal(p, q):
     nq = Normal(q.mean, q.logvar)
-    return kl(p,nq)
+    return kl(p, nq)
 
 class VAE(BaseMinifiedModeModuleClass):
     """Variational auto-encoder model.
@@ -488,8 +488,8 @@ class VAE(BaseMinifiedModeModuleClass):
             # closed form KL solution for sdnormal distribution
             kl_divergence_z = kl(inference_outputs["qz"], generative_outputs["pz"]).sum(dim=-1)
         else:
-            log_q_zx = inference_outputs["qz"].log_prob(inference_outputs["z"]) # log(q(z|x,s)) for some z
-            log_p_z = generative_outputs["pz"].log_prob(inference_outputs["z"]) # log(p(z)) for some z
+            log_q_zx = inference_outputs["qz"].log_prob(inference_outputs["z"])  # log(q(z|x,s)) for some z
+            log_p_z = generative_outputs["pz"].log_prob(inference_outputs["z"])  # log(p(z)) for some z
             # KL divergence KL(p,q) is: integral[p(x)(log p(x) - log(q(x)))]
             # The thing below is a monte carlo approximation of the log_probability value of the data with a SINGLE sample
             # we assume individual dimensions to be independent (allows us to multiply single dimension distributions, i.e. sum log)
@@ -516,7 +516,60 @@ class VAE(BaseMinifiedModeModuleClass):
             "kl_divergence_l": kl_divergence_l,
             "kl_divergence_z": kl_divergence_z,
         }
-        return LossOutput(loss=loss, reconstruction_loss=reconst_loss, kl_local=kl_local)
+
+        return LossOutput(loss=loss, reconstruction_loss=reconst_loss, kl_local=kl_local,
+                          extra_metrics={"marginal_llh": self._internal_ll(tensors, inference_outputs, reconst_loss)})
+
+    @auto_move_data
+    def _internal_ll(self, tensors, inference_outputs, reconst_loss, return_mean=False):
+        """
+        Log likelihood estimation of the input based on a single monte carlo sample
+        :param tensors: The tensors to compute the log likelihood on
+        :param inference_outputs: The computed inference output of the underlying model
+        :param reconst_loss: The computed reconstuction loss of the underlying model
+        :param return_mean: If true, return the mean of the log likelihood estimation
+        :return: log likelihood estimation of the input data
+        """
+        batch_index = tensors[REGISTRY_KEYS.BATCH_KEY]
+
+        to_sum = []
+
+        qz = inference_outputs["qz"]
+        ql = inference_outputs["ql"]
+        z = inference_outputs["z"]
+        library = inference_outputs["library"]
+
+        # Log-probabilities
+        """Prior distribution p(z), variational posterior q(z)"""
+        p_z = (
+            self.prior.log_prob(z).sum(dim=-1)
+        )
+        p_x_zl = -reconst_loss
+        q_z_x = qz.log_prob(z).sum(dim=-1)
+        log_prob_sum = p_z + p_x_zl - q_z_x  # log(p(z) * p(x|zl) * q(z|x))
+
+        if not self.use_observed_lib_size:
+            (
+                local_library_log_means,
+                local_library_log_vars,
+            ) = self._compute_local_library_params(batch_index)
+
+            p_l = (
+                Normal(local_library_log_means, local_library_log_vars.sqrt())
+                .log_prob(library)
+                .sum(dim=-1)
+            )
+            q_l_x = ql.log_prob(library).sum(dim=-1)
+
+            log_prob_sum += p_l - q_l_x
+        batch_log_lkl = logsumexp(log_prob_sum, dim=0)
+        if return_mean:
+            batch_log_lkl = torch.mean(batch_log_lkl).item()
+        else:
+            batch_log_lkl = batch_log_lkl.cpu()
+        return batch_log_lkl
+
+
 
     @torch.inference_mode()
     def sample(
@@ -618,7 +671,7 @@ class VAE(BaseMinifiedModeModuleClass):
             )
             p_x_zl = -reconst_loss
             q_z_x = qz.log_prob(z).sum(dim=-1)
-            log_prob_sum = p_z + p_x_zl - q_z_x # log(p(z) * p(x|zl) * q(z|x))
+            log_prob_sum = p_z + p_x_zl - q_z_x  # log(p(z) * p(x|zl) * q(z|x))
 
             if not self.use_observed_lib_size:
                 (
