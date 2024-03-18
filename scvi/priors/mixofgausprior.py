@@ -7,6 +7,9 @@ from scvi._types import Tunable
 
 
 class MixOfGausPrior(BasePrior):
+    """
+    This class if intended
+    """
     def __init__(self, n_latent: int, k : Tunable[int] = 50):
         super(MixOfGausPrior, self).__init__()
         self.k = k
