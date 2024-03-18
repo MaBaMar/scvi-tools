@@ -10,20 +10,16 @@ from scvi._types import Tunable
 
 class VampPrior(BasePrior):
     def __init__(self, n_latent: int, n_input: int, encoder: Encoder,
-                 n_components: Tunable[int] = 50, n_hidden: Tunable[int] = 256, dropout: Tunable[float] = 0):
-        print(n_input)
+                 n_components: Tunable[int] = 50, n_hidden: Tunable[int] = 256):
         super(VampPrior, self).__init__()
-        print("Dropout Rate is:{0}".format(dropout))
         self.n_input = n_input
         self.n_latent = n_latent
         self.encoder = encoder
-        self.register_buffer("pseudo_inputs", torch.ones(n_components))
+        self.register_buffer("pseudo_inputs", torch.eye(n_components))
         self.pseudo_transfromer = nn.Sequential(
             nn.Linear(n_components, n_hidden),
-            # nn.Dropout(dropout),  # TODO: can implement dropout, s.t. model.eval() works?
             nn.ReLU(),
             nn.Linear(n_hidden, n_input),
-            # nn.Dropout(dropout),
             nn.ReLU()
         )
 
