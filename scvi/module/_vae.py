@@ -338,7 +338,7 @@ class VAE(BaseMinifiedModeModuleClass):
         """High level inference method.
 
         Runs the inference (encoder) model.
-        returns latent variable z, postrior distribution q_z and q_l and library size l 
+        returns latent variable z, postrior distribution q_z and q_l and library size l
         """
         x_ = x
         if self.use_observed_lib_size:
@@ -484,7 +484,7 @@ class VAE(BaseMinifiedModeModuleClass):
         x = tensors[REGISTRY_KEYS.X_KEY]
         # kl_divergence_z = kl(inference_outputs["qz"], generative_outputs["pz"]).sum(dim=-1) """
         """ qz: variational posterior, pz: prior """
-        if self.prior_distribution in ["sdnormaal"]:
+        if self.prior_distribution in ["sdnormal"]:
             # closed form KL solution for sdnormal distribution
             kl_divergence_z = kl(inference_outputs["qz"], generative_outputs["pz"]).sum(dim=-1)
         else:
