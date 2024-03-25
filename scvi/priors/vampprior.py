@@ -18,9 +18,9 @@ class VampPrior(BasePrior):
         self.register_buffer("pseudo_inputs", torch.eye(n_components))
         self.pseudo_transfromer = nn.Sequential(
             nn.Linear(n_components, n_hidden),
-            # nn.ReLU(),
+            nn.ReLU(),
             nn.Linear(n_hidden, n_input),
-            # nn.ReLU()
+            nn.ReLU()
         )
 
         self.w = nn.Parameter(torch.zeros(self.pseudo_inputs.shape[0], ))
