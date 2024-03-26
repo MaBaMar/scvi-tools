@@ -10,7 +10,7 @@ from scvi._types import Tunable
 
 class VampPrior(BasePrior):
     def __init__(self, n_latent: int, n_input: int, encoder: Encoder,
-                 n_components: Tunable[int] = 50, n_hidden: Tunable[int] = 256, dropout: Tunable[float] = 0):
+                 n_components: Tunable[int] = 50, n_hidden: Tunable[int] = 256):
         super(VampPrior, self).__init__()
         self.n_input = n_input
         self.n_latent = n_latent
@@ -18,7 +18,6 @@ class VampPrior(BasePrior):
         self.register_buffer("pseudo_inputs", torch.eye(n_components))
         self.pseudo_transfromer = nn.Sequential(
             nn.Linear(n_components, n_hidden),
-            nn.Dropout(dropout),
             nn.ReLU(),
             nn.Linear(n_hidden, n_input),
             nn.ReLU()
