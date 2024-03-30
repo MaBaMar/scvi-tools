@@ -26,10 +26,12 @@ torch.backends.cudnn.benchmark = True
 
 logger = logging.getLogger(__name__)
 
+
 @register_kl(Normal, StandartNormalPrior)
 def kl_normalflow_normal(p, q):
     nq = Normal(q.mean, q.logvar)
     return kl(p, nq)
+
 
 class VAE(BaseMinifiedModeModuleClass):
     """Variational auto-encoder model.
@@ -116,33 +118,33 @@ class VAE(BaseMinifiedModeModuleClass):
     """
 
     def __init__(
-        self,
-        n_input: int,
-        n_batch: int = 0,
-        n_labels: int = 0,
-        n_hidden: Tunable[int] = 128,
-        n_latent: Tunable[int] = 10,
-        n_layers: Tunable[int] = 1,
-        n_continuous_cov: int = 0,
-        n_cats_per_cov: Optional[Iterable[int]] = None,
-        dropout_rate: Tunable[float] = 0.1,
-        dispersion: Tunable[Literal["gene", "gene-batch", "gene-label", "gene-cell"]] = "gene",
-        log_variational: Tunable[bool] = True,
-        gene_likelihood: Tunable[Literal["zinb", "nb", "poisson"]] = "zinb",
-        latent_distribution: Tunable[Literal["normal", "ln"]] = "normal",
-        prior_distribution: Tunable[Literal["sdnormal", "mixofgaus", "vamp", "normalflow"]] = "sdnormal",
-        prior_kwargs: Optional[dict] = None,
-        encode_covariates: Tunable[bool] = False,
-        deeply_inject_covariates: Tunable[bool] = True,
-        use_batch_norm: Tunable[Literal["encoder", "decoder", "none", "both"]] = "both",
-        use_layer_norm: Tunable[Literal["encoder", "decoder", "none", "both"]] = "none",
-        use_size_factor_key: bool = False,
-        use_observed_lib_size: Tunable[bool] = True,
-        library_log_means: Optional[np.ndarray] = None,
-        library_log_vars: Optional[np.ndarray] = None,
-        var_activation: Tunable[Callable] = None,
-        extra_encoder_kwargs: Optional[dict] = None,
-        extra_decoder_kwargs: Optional[dict] = None,
+            self,
+            n_input: int,
+            n_batch: int = 0,
+            n_labels: int = 0,
+            n_hidden: Tunable[int] = 128,
+            n_latent: Tunable[int] = 10,
+            n_layers: Tunable[int] = 1,
+            n_continuous_cov: int = 0,
+            n_cats_per_cov: Optional[Iterable[int]] = None,
+            dropout_rate: Tunable[float] = 0.1,
+            dispersion: Tunable[Literal["gene", "gene-batch", "gene-label", "gene-cell"]] = "gene",
+            log_variational: Tunable[bool] = True,
+            gene_likelihood: Tunable[Literal["zinb", "nb", "poisson"]] = "zinb",
+            latent_distribution: Tunable[Literal["normal", "ln"]] = "normal",
+            prior_distribution: Tunable[Literal["sdnormal", "mixofgaus", "vamp", "normalflow"]] = "sdnormal",
+            prior_kwargs: Optional[dict] = None,
+            encode_covariates: Tunable[bool] = False,
+            deeply_inject_covariates: Tunable[bool] = True,
+            use_batch_norm: Tunable[Literal["encoder", "decoder", "none", "both"]] = "both",
+            use_layer_norm: Tunable[Literal["encoder", "decoder", "none", "both"]] = "none",
+            use_size_factor_key: bool = False,
+            use_observed_lib_size: Tunable[bool] = True,
+            library_log_means: Optional[np.ndarray] = None,
+            library_log_vars: Optional[np.ndarray] = None,
+            var_activation: Tunable[Callable] = None,
+            extra_encoder_kwargs: Optional[dict] = None,
+            extra_decoder_kwargs: Optional[dict] = None,
     ):
         super().__init__()
         self.dispersion = dispersion
@@ -252,8 +254,8 @@ class VAE(BaseMinifiedModeModuleClass):
             raise NotImplementedError(f"{prior_distribution=} is not implemented.")
 
     def _get_inference_input(
-        self,
-        tensors,
+            self,
+            tensors,
     ):
         batch_index = tensors[REGISTRY_KEYS.BATCH_KEY]
 
@@ -328,12 +330,12 @@ class VAE(BaseMinifiedModeModuleClass):
 
     @auto_move_data
     def _regular_inference(
-        self,
-        x,
-        batch_index,
-        cont_covs=None,
-        cat_covs=None,
-        n_samples=1,
+            self,
+            x,
+            batch_index,
+            cont_covs=None,
+            cat_covs=None,
+            n_samples=1,
     ):
         """High level inference method.
 
@@ -392,15 +394,15 @@ class VAE(BaseMinifiedModeModuleClass):
 
     @auto_move_data
     def generative(
-        self,
-        z,
-        library,
-        batch_index,
-        cont_covs=None,
-        cat_covs=None,
-        size_factor=None,
-        y=None,
-        transform_batch=None,
+            self,
+            z,
+            library,
+            batch_index,
+            cont_covs=None,
+            cat_covs=None,
+            size_factor=None,
+            y=None,
+            transform_batch=None,
     ):
         """Runs the generative model."""
         # TODO: refactor forward function to not rely on y
@@ -468,17 +470,17 @@ class VAE(BaseMinifiedModeModuleClass):
         # pz = Normal(torch.zeros_like(z), torch.ones_like(z)) # ERRONOUS IMPLEMENTATION !!!!!!!!!!!!!!!!!!!
         pz = self.prior
         return {
-            "px": px, # p(x|z,s,l)
-            "pl": pl, # prior distribution l, one dimensional gaussian
-            "pz": pz, # prior distribution z
+            "px": px,  # p(x|z,s,l)
+            "pl": pl,  # prior distribution l, one dimensional gaussian
+            "pz": pz,  # prior distribution z
         }
 
     def loss(
-        self,
-        tensors,
-        inference_outputs,
-        generative_outputs,
-        kl_weight: float = 1.0,
+            self,
+            tensors,
+            inference_outputs,
+            generative_outputs,
+            kl_weight: float = 1.0,
     ):
         """Computes the loss function for the model."""
         x = tensors[REGISTRY_KEYS.X_KEY]
@@ -517,8 +519,9 @@ class VAE(BaseMinifiedModeModuleClass):
             "kl_divergence_z": kl_divergence_z,
         }
 
-        return LossOutput(loss=loss, reconstruction_loss=reconst_loss, kl_local=kl_local,
-                          extra_metrics={"marginal_llh": self._internal_ll(tensors, inference_outputs, reconst_loss)})
+        return LossOutput(loss=loss, reconstruction_loss=reconst_loss, kl_local=kl_local)
+
+    # extra_metrics = {"marginal_llh": self._internal_ll(tensors, inference_outputs, reconst_loss)}
 
     @auto_move_data
     def _internal_ll(self, tensors, inference_outputs, reconst_loss, return_mean=False):
@@ -569,14 +572,12 @@ class VAE(BaseMinifiedModeModuleClass):
             batch_log_lkl = batch_log_lkl.cpu()
         return batch_log_lkl
 
-
-
     @torch.inference_mode()
     def sample(
-        self,
-        tensors: dict[str, torch.Tensor],
-        n_samples: int = 1,
-        max_poisson_rate: float = 1e8,
+            self,
+            tensors: dict[str, torch.Tensor],
+            n_samples: int = 1,
+            max_poisson_rate: float = 1e8,
     ) -> torch.Tensor:
         r"""Generate predictive samples from the posterior predictive distribution.
 
@@ -623,11 +624,11 @@ class VAE(BaseMinifiedModeModuleClass):
     @torch.inference_mode()
     @auto_move_data
     def marginal_ll(
-        self,
-        tensors,
-        n_mc_samples,
-        return_mean=False,
-        n_mc_samples_per_pass=1,
+            self,
+            tensors,
+            n_mc_samples,
+            return_mean=False,
+            n_mc_samples_per_pass=1,
     ):
         """Computes the marginal log likelihood of the model.
 
@@ -645,6 +646,9 @@ class VAE(BaseMinifiedModeModuleClass):
         batch_index = tensors[REGISTRY_KEYS.BATCH_KEY]
 
         to_sum = []
+        pz_sum = []
+        p_x_zl_sum = []
+        q_z_x_sum = []
         if n_mc_samples_per_pass > n_mc_samples:
             logger.warn(
                 "Number of chunks is larger than the total number of samples, setting it to the number of samples"
@@ -673,6 +677,10 @@ class VAE(BaseMinifiedModeModuleClass):
             q_z_x = qz.log_prob(z).sum(dim=-1)
             log_prob_sum = p_z + p_x_zl - q_z_x  # log(p(z) * p(x|zl) * q(z|x))
 
+            pz_sum.append(p_z)
+            p_x_zl_sum.append(p_x_zl)
+            q_z_x_sum.append(q_z_x)
+
             if not self.use_observed_lib_size:
                 (
                     local_library_log_means,
@@ -690,12 +698,22 @@ class VAE(BaseMinifiedModeModuleClass):
 
             to_sum.append(log_prob_sum)
         to_sum = torch.cat(to_sum, dim=0)
+        pz_sum = logsumexp(torch.cat(pz_sum, dim=0), dim=0)
+        p_x_zl_sum = logsumexp(torch.cat(p_x_zl_sum, dim=0), dim=0)
+        q_z_x_sum = logsumexp(torch.cat(q_z_x_sum, dim=0), dim=0)
+
         batch_log_lkl = logsumexp(to_sum, dim=0) - np.log(n_mc_samples)
         if return_mean:
             batch_log_lkl = torch.mean(batch_log_lkl).item()
+            pz_sum = torch.mean(pz_sum).item()
+            p_x_zl_sum = torch.mean(p_x_zl_sum).item()
+            q_z_x_sum = torch.mean(q_z_x_sum).item()
         else:
             batch_log_lkl = batch_log_lkl.cpu()
-        return batch_log_lkl
+            pz_sum = pz_sum.cpu()
+            p_x_zl_sum = p_x_zl_sum.cpu()
+            q_z_x_sum = q_z_x_sum.cpu()
+        return batch_log_lkl, pz_sum, p_x_zl_sum, q_z_x_sum
 
 
 class LDVAE(VAE):
@@ -758,22 +776,22 @@ class LDVAE(VAE):
     """
 
     def __init__(
-        self,
-        n_input: int,
-        n_batch: int = 0,
-        n_labels: int = 0,
-        n_hidden: int = 128,
-        n_latent: int = 10,
-        n_layers_encoder: int = 1,
-        dropout_rate: float = 0.1,
-        dispersion: str = "gene",
-        log_variational: bool = True,
-        gene_likelihood: str = "nb",
-        use_batch_norm: bool = True,
-        bias: bool = False,
-        latent_distribution: str = "normal",
-        use_observed_lib_size: bool = False,
-        **kwargs,
+            self,
+            n_input: int,
+            n_batch: int = 0,
+            n_labels: int = 0,
+            n_hidden: int = 128,
+            n_latent: int = 10,
+            n_layers_encoder: int = 1,
+            dropout_rate: float = 0.1,
+            dispersion: str = "gene",
+            log_variational: bool = True,
+            gene_likelihood: str = "nb",
+            use_batch_norm: bool = True,
+            bias: bool = False,
+            latent_distribution: str = "normal",
+            use_observed_lib_size: bool = False,
+            **kwargs,
     ):
         super().__init__(
             n_input=n_input,

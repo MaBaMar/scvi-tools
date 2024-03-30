@@ -86,19 +86,24 @@ class VAEMixin:
         )
         if hasattr(self.module, "marginal_ll"):
             log_lkl = []
+            pz_sum = []
+            p_x_zl_sum = []
+            q_z_x_sum = []
             for tensors in scdl:
-                log_lkl.append(
-                    self.module.marginal_ll(
+                ll, pz, pxzl, qzx = self.module.marginal_ll(
                         tensors,
                         n_mc_samples=n_mc_samples,
                         return_mean=return_mean,
                         **kwargs,
                     )
-                )
+                log_lkl.append(ll)
+                pz_sum.append(pz)
+                p_x_zl_sum.append(pxzl)
+                q_z_x_sum.append(qzx)
             if not return_mean:
-                return torch.cat(log_lkl, 0)
+                return torch.cat(log_lkl, 0), torch.cat(pz_sum, 0), torch.cat(p_x_zl_sum, 0), torch.cat(q_z_x_sum, 0)
             else:
-                return np.mean(log_lkl)
+                return np.mean(log_lkl), torch.mean(pz_sum), torch.mean(p_x_zl_sum), torch.mean(q_z_x_sum)
         else:
             raise NotImplementedError(
                 "marginal_ll is not implemented for current model. "
