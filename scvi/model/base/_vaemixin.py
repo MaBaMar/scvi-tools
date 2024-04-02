@@ -103,7 +103,7 @@ class VAEMixin:
             if not return_mean:
                 return torch.cat(log_lkl, 0), torch.cat(pz_sum, 0), torch.cat(p_x_zl_sum, 0), torch.cat(q_z_x_sum, 0)
             else:
-                return np.mean(log_lkl), torch.mean(pz_sum), torch.mean(p_x_zl_sum), torch.mean(q_z_x_sum)
+                return np.mean(log_lkl), np.mean(pz_sum), np.mean(p_x_zl_sum), np.mean(q_z_x_sum)
         else:
             raise NotImplementedError(
                 "marginal_ll is not implemented for current model. "

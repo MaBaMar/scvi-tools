@@ -677,7 +677,7 @@ class VAE(BaseMinifiedModeModuleClass):
             q_z_x = qz.log_prob(z).sum(dim=-1)
             log_prob_sum = p_z + p_x_zl - q_z_x  # log(p(z) * p(x|zl) * q(z|x))
 
-            pz_sum.append(p_z)
+            pz_sum.append(p_z.item())
             p_x_zl_sum.append(p_x_zl)
             q_z_x_sum.append(q_z_x)
 
@@ -698,19 +698,18 @@ class VAE(BaseMinifiedModeModuleClass):
 
             to_sum.append(log_prob_sum)
         to_sum = torch.cat(to_sum, dim=0)
-        pz_sum = logsumexp(torch.cat(pz_sum, dim=0), dim=0)
         p_x_zl_sum = logsumexp(torch.cat(p_x_zl_sum, dim=0), dim=0)
         q_z_x_sum = logsumexp(torch.cat(q_z_x_sum, dim=0), dim=0)
 
         batch_log_lkl = logsumexp(to_sum, dim=0) - np.log(n_mc_samples)
         if return_mean:
             batch_log_lkl = torch.mean(batch_log_lkl).item()
-            pz_sum = torch.mean(pz_sum).item()
+            pz_sum = np.array(pz_sum).mean()
             p_x_zl_sum = torch.mean(p_x_zl_sum).item()
             q_z_x_sum = torch.mean(q_z_x_sum).item()
         else:
             batch_log_lkl = batch_log_lkl.cpu()
-            pz_sum = pz_sum.cpu()
+            pz_sum = pz_sum # TODO: fix
             p_x_zl_sum = p_x_zl_sum.cpu()
             q_z_x_sum = q_z_x_sum.cpu()
         return batch_log_lkl, pz_sum, p_x_zl_sum, q_z_x_sum
