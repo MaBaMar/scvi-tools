@@ -505,7 +505,7 @@ class VAE(BaseMinifiedModeModuleClass):
         else:
             kl_divergence_l = torch.tensor(0.0, device=x.device)
 
-        reconst_loss = -generative_outputs["px"].log_prob(x).sum(-1)
+        reconst_loss = -generative_outputs["px"].log_prob(x).sum(-1) #shape (128)
 
         kl_local_for_warmup = kl_divergence_z
         kl_local_no_warmup = kl_divergence_l
@@ -522,55 +522,6 @@ class VAE(BaseMinifiedModeModuleClass):
         return LossOutput(loss=loss, reconstruction_loss=reconst_loss, kl_local=kl_local)
 
     # extra_metrics = {"marginal_llh": self._internal_ll(tensors, inference_outputs, reconst_loss)}
-
-    @auto_move_data
-    def _internal_ll(self, tensors, inference_outputs, reconst_loss, return_mean=False):
-        """
-        Log likelihood estimation of the input based on a single monte carlo sample
-        :param tensors: The tensors to compute the log likelihood on
-        :param inference_outputs: The computed inference output of the underlying model
-        :param reconst_loss: The computed reconstuction loss of the underlying model
-        :param return_mean: If true, return the mean of the log likelihood estimation
-        :return: log likelihood estimation of the input data
-        """
-        batch_index = tensors[REGISTRY_KEYS.BATCH_KEY]
-
-        to_sum = []
-
-        qz = inference_outputs["qz"]
-        ql = inference_outputs["ql"]
-        z = inference_outputs["z"]
-        library = inference_outputs["library"]
-
-        # Log-probabilities
-        """Prior distribution p(z), variational posterior q(z)"""
-        p_z = (
-            self.prior.log_prob(z).sum(dim=-1)
-        )
-        p_x_zl = -reconst_loss
-        q_z_x = qz.log_prob(z).sum(dim=-1)
-        log_prob_sum = p_z + p_x_zl - q_z_x  # log(p(z) * p(x|zl) * q(z|x))
-
-        if not self.use_observed_lib_size:
-            (
-                local_library_log_means,
-                local_library_log_vars,
-            ) = self._compute_local_library_params(batch_index)
-
-            p_l = (
-                Normal(local_library_log_means, local_library_log_vars.sqrt())
-                .log_prob(library)
-                .sum(dim=-1)
-            )
-            q_l_x = ql.log_prob(library).sum(dim=-1)
-
-            log_prob_sum += p_l - q_l_x
-        batch_log_lkl = logsumexp(log_prob_sum, dim=0)
-        if return_mean:
-            batch_log_lkl = torch.mean(batch_log_lkl).item()
-        else:
-            batch_log_lkl = batch_log_lkl.cpu()
-        return batch_log_lkl
 
     @torch.inference_mode()
     def sample(

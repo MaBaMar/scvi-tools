@@ -9,10 +9,12 @@ from ._multivi import MULTIVI
 from ._peakvi import PEAKVI
 from ._scanvi import SCANVI
 from ._scvi import SCVI
+from ._discvi import DiSCVI
 from ._totalvi import TOTALVI
 from ._utils import get_max_epochs_heuristic
 
 __all__ = [
+    "DiSCVI",
     "SCVI",
     "TOTALVI",
     "LinearSCVI",
