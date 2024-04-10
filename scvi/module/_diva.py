@@ -19,6 +19,10 @@ from torch.distributions import kl_divergence as kl
 
 # TODO: support minification
 class DIVA(BaseModuleClass):
+    """Slight modification of DIVA model to SCVI setting. Additionally uses library size just as in SCVI,
+    i.e. generative is p(x|zd,zy,zx,l) where zd is batch-latent representation, zy is label-latent representation,
+    zx is 'other effects' latent-space and l models the library size (in our settings, we use observed l, not l
+    as probability distribution) """
 
     def __init__(
         self,
@@ -195,12 +199,12 @@ class DIVA(BaseModuleClass):
 
         """auxiliary tasks q_w(d|zd), q_w(y|zy)"""
         self.aux_d_zd_enc = torch.nn.Sequential(
-            nn.ReLU(),  # TODO: find out why they put relu here ...
+            nn.ReLU(),
             nn.Linear(n_latent_d, n_batch)
         )
 
         self.aux_y_enc = torch.nn.Sequential(
-            nn.ReLU(),  # TODO: find out why they put relu here ...
+            nn.ReLU(),
             nn.Linear(n_latent_y, n_labels)
         )
 
@@ -376,8 +380,9 @@ class DIVA(BaseModuleClass):
         d = tensors[REGISTRY_KEYS.BATCH_KEY]
         y = tensors[REGISTRY_KEYS.LABELS_KEY]
 
-        # very rough monte carlo approximation of reconstruction loss,
-        # only uses a subset of the points of the true result TODO: maybe replace with other loss
+        # monte carlo approximation of reconstruction loss, uses a subset of the four dimensional monte-carlo sampling
+        # required when solving the model reconstruction loss with monte carlo approximations
+
         reconst_loss = -generative_outputs["px_recon"].log_prob(x).sum(-1)
 
         # kl terms
@@ -385,7 +390,6 @@ class DIVA(BaseModuleClass):
         zy_x = inference_outputs["zy_x"]
         zd_x = inference_outputs["zd_x"]
 
-        # print((generative_outputs["p_zx"].log_prob(zx_x) - inference_outputs["q_zx_x"].log_prob(zx_x)).shape)
         kl_zx = torch.sum(inference_outputs["q_zx_x"].log_prob(zx_x) - generative_outputs["p_zx"].log_prob(zx_x),
                           dim=-1)
         kl_zy = torch.sum(inference_outputs["q_zy_x"].log_prob(zy_x) - generative_outputs["p_zy_y"].log_prob(zy_x),
@@ -402,7 +406,6 @@ class DIVA(BaseModuleClass):
             kl_l = torch.tensor(0.0, device=x.device)
 
         kl_local_for_warmup = self.beta_x * kl_zx + self.beta_y * kl_zy + self.beta_d * kl_zd
-        # print(kl_local_for_warmup)
         kl_local_no_warmup = kl_l
         weighted_kl_local = kl_weight * kl_local_for_warmup + kl_local_no_warmup
 
@@ -413,9 +416,7 @@ class DIVA(BaseModuleClass):
         aux_y = F.cross_entropy(generative_outputs["y_hat"], y.view(-1, ))
         aux_loss = self.alpha_d * aux_d + self.alpha_y * aux_y
 
-        # print(reconst_loss[0], weighted_kl_local[0], aux_loss.item())
         loss = torch.mean(reconst_loss + weighted_kl_local) + aux_loss
-        # print(loss)
 
         kl_local = {
             "kl_divergence_l": kl_l,
@@ -424,12 +425,11 @@ class DIVA(BaseModuleClass):
             "kl_divergence_zy": kl_zy
         }
 
-        # print(reconst_loss[0], kl_l[0], kl_zd[0], kl_zx[0], kl_zy[0], aux_d[0], aux_y[0])
-
         return LossOutput(loss, reconst_loss, kl_local, extra_metrics={
             'aux_d': aux_d,
             'aux_y': aux_y
         })
 
     def sample(self, *args, **kwargs):
-        pass
+        # not really needed for our experiments
+        raise NotImplementedError
