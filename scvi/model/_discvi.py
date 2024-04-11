@@ -224,6 +224,28 @@ class DiSCVI(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         """
         latent = self.get_latent_representation()
         n_d = self._module_kwargs["n_latent_d"]
-        n_x = self._module_kwargs["n_latent_x"]+n_d
-        n_y = self._module_kwargs["n_latent_y"]+n_x
+        n_x = self._module_kwargs["n_latent_x"] + n_d
+        n_y = self._module_kwargs["n_latent_y"] + n_x
         return latent[:, :n_d], latent[:, n_d:n_x], latent[:, n_x:n_y]
+
+    @torch.inference_mode()
+    def predict(
+        self, adata: Optional[AnnData] = None,
+        indices: Optional[Sequence[int]] = None,
+        batch_size: Optional[int] = None,
+    ):
+        """
+        :returns: (y, y_hat)
+        """
+        predictions = []
+        labels = []
+        self._check_if_trained(warn=False)
+        adata = self._validate_anndata(adata)
+        scdl = self._make_data_loader(adata=adata, indices=indices, batch_size=batch_size)
+
+        for tensors in scdl:
+            model_pred = self.module.predict(tensors)
+            predictions.append(model_pred[0].cpu())
+            labels.append(model_pred[1].cpu())
+
+        return torch.cat(labels, dim=0), torch.cat(predictions, dim=0)

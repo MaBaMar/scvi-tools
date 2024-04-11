@@ -1,7 +1,7 @@
 """DIVA implementation supervised"""
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Literal, Optional, Tuple
 
 import numpy as np
 import torch
@@ -433,3 +433,21 @@ class DIVA(BaseModuleClass):
     def sample(self, *args, **kwargs):
         # not really needed for our experiments
         raise NotImplementedError
+
+    @auto_move_data
+    def predict(self, tensors) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        :param tensors: Input tensors of batch as provided by dataloader
+        :return: Tuple of (y_hat, y) where y_hat is the prediction and y the ground truth
+        """
+        x = tensors[REGISTRY_KEYS.X_KEY]
+
+        if self.log_variational:
+            x_ = torch.log(1 + x)
+        else:
+            x_ = x
+
+        _, zy_x = self.posterior_zy_x_encoder(x_)
+        _, y_hat = self.aux_y_enc(zy_x).max(dim=1)
+        y = tensors[REGISTRY_KEYS.LABELS_KEY]
+        return y_hat, y
