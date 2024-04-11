@@ -125,6 +125,7 @@ class UnsupervisedTrainingMixin:
             )
 
         plan_kwargs = plan_kwargs or {}
+        plan_kwargs['n_steps_kl_warmup'] = min(400, max_epochs)
         training_plan = self._training_plan_cls(self.module, **plan_kwargs)
 
         es = "early_stopping"
