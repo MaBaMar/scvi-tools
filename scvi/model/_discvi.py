@@ -214,15 +214,14 @@ class DiSCVI(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
 
         return torch.cat(latent).numpy()
 
-    @property
-    def latent_separated(self):
+    def latent_separated(self, **kwargs):
         """Returns [ :math:`z_d` , :math:`z_x` , :math:`z_y` ]
         Parameters
         ----------
         Returns
         -------
         """
-        latent = self.get_latent_representation()
+        latent = self.get_latent_representation(**kwargs)
         n_d = self._module_kwargs["n_latent_d"]
         n_x = self._module_kwargs["n_latent_x"] + n_d
         n_y = self._module_kwargs["n_latent_y"] + n_x

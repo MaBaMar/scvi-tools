@@ -19,7 +19,7 @@ from torch.distributions import kl_divergence as kl
 
 # TODO: support minification
 class DIVA(BaseModuleClass):
-    """Slight modification of DIVA model to SCVI setting. Additionally uses library size just as in SCVI,
+    """Slight modification of DIVA model to SCVI setting. Additionally, uses library size just as in SCVI,
     i.e. generative is p(x|zd,zy,zx,l) where zd is batch-latent representation, zy is label-latent representation,
     zx is 'other effects' latent-space and l models the library size (in our settings, we use observed l, not l
     as probability distribution) """
@@ -37,6 +37,12 @@ class DIVA(BaseModuleClass):
         beta_y: float = 1,
         alpha_d: float = 1,
         alpha_y: float = 1,
+        priors_n_hidden: int = 32,
+        priors_n_layers: int = 1,
+        posterior_n_hidden: int = 128,
+        posterior_n_layers: int = 1,
+        decoder_n_hidden: int = 128,
+        decoder_n_layers: int = 1,
         dropout_rate: float = 0.1,
         dispersion: Literal["gene", "gene-batch", "gene-label", "gene-cell"] = "gene",
         log_variational: Tunable[bool] = True,
@@ -112,8 +118,8 @@ class DIVA(BaseModuleClass):
         self.reconst_dxy_decoder = DecoderSCVI(
             n_input=n_latent_d + n_latent_x + n_latent_y,
             n_output=n_input,  # output dim of decoder = original input dim
-            n_layers=1,  # TODO: add params or kwargs param for such stuff to __init__
-            n_hidden=128,  # TODO: add params or kwargs param for such stuff to __init__
+            n_layers=decoder_n_layers,
+            n_hidden=decoder_n_hidden,
             use_batch_norm=use_batch_norm_decoder,
             use_layer_norm=use_layer_norm_decoder,
             **_extra_decoder_kwargs
@@ -125,8 +131,8 @@ class DIVA(BaseModuleClass):
         self.prior_zd_d_encoder = Encoder(
             n_input=n_batch,
             n_output=n_latent_d,
-            n_layers=1,  # TODO: add params or kwargs param for such stuff to __init__
-            n_hidden=32,  # TODO: add params or kwargs param for such stuff to __init__
+            n_layers=priors_n_layers,
+            n_hidden=priors_n_hidden,
             dropout_rate=self.dropout_rate,
             use_batch_norm=use_batch_norm_encoder,
             use_layer_norm=use_layer_norm_encoder,
@@ -137,8 +143,8 @@ class DIVA(BaseModuleClass):
         self.prior_zy_y_encoder = Encoder(
             n_input=n_labels,
             n_output=n_latent_y,
-            n_layers=1,  # TODO: add params or kwargs param for such stuff to __init__
-            n_hidden=32,  # TODO: add params or kwargs param for such stuff to __init__
+            n_layers=priors_n_layers,
+            n_hidden=priors_n_hidden,
             dropout_rate=self.dropout_rate,
             use_batch_norm=use_batch_norm_encoder,
             use_layer_norm=use_layer_norm_encoder,
@@ -164,8 +170,8 @@ class DIVA(BaseModuleClass):
         self.posterior_zx_x_encoder = Encoder(
             n_input=n_input,
             n_output=n_latent_x,
-            n_layers=1,  # TODO: add params or kwargs param for such stuff to __init__
-            n_hidden=128,  # TODO: add params or kwargs param for such stuff to __init__
+            n_layers=posterior_n_layers,
+            n_hidden=posterior_n_hidden,
             distribution=self.latent_distribution,
             use_batch_norm=use_batch_norm_encoder,
             use_layer_norm=use_layer_norm_encoder,
@@ -176,8 +182,8 @@ class DIVA(BaseModuleClass):
         self.posterior_zd_x_encoder = Encoder(
             n_input=n_input,
             n_output=n_latent_d,
-            n_layers=1,  # TODO: add params or kwargs param for such stuff to __init__
-            n_hidden=128,  # TODO: add params or kwargs param for such stuff to __init__
+            n_layers=posterior_n_layers,
+            n_hidden=posterior_n_hidden,
             distribution=self.latent_distribution,
             use_batch_norm=use_batch_norm_encoder,
             use_layer_norm=use_layer_norm_encoder,
@@ -188,8 +194,8 @@ class DIVA(BaseModuleClass):
         self.posterior_zy_x_encoder = Encoder(
             n_input=n_input,
             n_output=n_latent_y,
-            n_layers=1,  # TODO: add params or kwargs param for such stuff to __init__
-            n_hidden=128,  # TODO: add params or kwargs param for such stuff to __init__
+            n_layers=posterior_n_layers,
+            n_hidden=posterior_n_hidden,
             distribution=self.latent_distribution,
             use_batch_norm=use_batch_norm_encoder,
             use_layer_norm=use_layer_norm_encoder,
