@@ -7,6 +7,7 @@ from typing import Literal, Optional, Sequence, Union
 import numpy as np
 import torch
 from anndata import AnnData
+from scvi.dataloaders._data_splitting import DefaultDataSplitter
 from overrides import overrides
 from scvi import REGISTRY_KEYS, settings
 from scvi.data import AnnDataManager
@@ -36,8 +37,13 @@ class DiSCVI(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         dispersion: Literal["gene", "gene-batch", "gene-label", "gene-cell"] = "gene",
         gene_likelihood: Literal["zinb", "nb", "poisson"] = "zinb",
         latent_distribution: Literal["normal", "ln"] = "normal",
+        use_default_data_splitter=False,
         **kwargs
     ):
+        """
+        :param use_default_data_splitter: If true, you need to pass "default_splitter" argument as datasplitter_kwargs
+        when calling train, passing a default datasplitter module
+        """
         super().__init__(adata)
 
         # TODO: potentially overwrite training plan and train runner of _training_mixin.py
@@ -95,6 +101,9 @@ class DiSCVI(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
                 **kwargs
             )
         self.init_params_ = self._get_init_params(locals())
+
+        if use_default_data_splitter:
+            self._data_splitter_cls = DefaultDataSplitter
 
         # TODO: complete
 

@@ -4,14 +4,6 @@ from typing import Optional, Union
 import lightning.pytorch as pl
 import numpy as np
 import torch
-from torch.utils.data import (
-    BatchSampler,
-    DataLoader,
-    Dataset,
-    RandomSampler,
-    SequentialSampler,
-)
-
 from scvi import REGISTRY_KEYS, settings
 from scvi.data import AnnDataManager
 from scvi.data._utils import get_anndata_attribute
@@ -19,6 +11,13 @@ from scvi.dataloaders._ann_dataloader import AnnDataLoader
 from scvi.dataloaders._semi_dataloader import SemiSupervisedDataLoader
 from scvi.model._utils import parse_device_args
 from scvi.utils._docstrings import devices_dsp
+from torch.utils.data import (
+    BatchSampler,
+    DataLoader,
+    Dataset,
+    RandomSampler,
+    SequentialSampler,
+)
 
 
 def validate_data_split(
@@ -133,8 +132,8 @@ class DataSplitter(pl.LightningDataModule):
             indices = random_state.permutation(indices)
 
         self.val_idx = indices[:n_val]
-        self.train_idx = indices[n_val : (n_val + n_train)]
-        self.test_idx = indices[(n_val + n_train) :]
+        self.train_idx = indices[n_val: (n_val + n_train)]
+        self.test_idx = indices[(n_val + n_train):]
 
     def train_dataloader(self):
         """Create train data loader."""
@@ -278,9 +277,9 @@ class SemiSupervisedDataSplitter(pl.LightningDataModule):
 
             labeled_idx_val = labeled_permutation[:n_labeled_val]
             labeled_idx_train = labeled_permutation[
-                n_labeled_val : (n_labeled_val + n_labeled_train)
-            ]
-            labeled_idx_test = labeled_permutation[(n_labeled_val + n_labeled_train) :]
+                                n_labeled_val: (n_labeled_val + n_labeled_train)
+                                ]
+            labeled_idx_test = labeled_permutation[(n_labeled_val + n_labeled_train):]
         else:
             labeled_idx_test = []
             labeled_idx_train = []
@@ -300,9 +299,9 @@ class SemiSupervisedDataSplitter(pl.LightningDataModule):
 
             unlabeled_idx_val = unlabeled_permutation[:n_unlabeled_val]
             unlabeled_idx_train = unlabeled_permutation[
-                n_unlabeled_val : (n_unlabeled_val + n_unlabeled_train)
-            ]
-            unlabeled_idx_test = unlabeled_permutation[(n_unlabeled_val + n_unlabeled_train) :]
+                                  n_unlabeled_val: (n_unlabeled_val + n_unlabeled_train)
+                                  ]
+            unlabeled_idx_test = unlabeled_permutation[(n_unlabeled_val + n_unlabeled_train):]
         else:
             unlabeled_idx_train = []
             unlabeled_idx_val = []
@@ -506,3 +505,77 @@ class _DeviceBackedDataset(Dataset):
     def __len__(self):
         for _, value in self.data.items():
             return len(value)
+
+
+class DefaultDataSplitter(pl.LightningDataModule):
+    data_loader_cls = AnnDataLoader
+
+    def __init__(
+        self,
+        adata_manager: AnnDataManager,
+        default_splitter: any,
+        train_size: float = 0.9,
+        validation_size: Optional[float] = None,
+        shuffle_set_split: bool = True,
+        load_sparse_tensor: bool = False,
+        pin_memory: bool = False,
+        **kwargs
+    ):
+        super().__init__()
+
+        self._internal_splitter = default_splitter
+        self.adata_manager = adata_manager
+        self.shuffle_set_split = shuffle_set_split
+        self.data_loader_kwargs = kwargs
+        self.load_sparse_tensor = load_sparse_tensor
+        self.train_size = default_splitter.effective_train_size
+        self.validation_size = 1 - self.train_size
+
+        self.data_loader_kwargs = kwargs
+        self.pin_memory = pin_memory
+
+    def setup(self, stage: Optional[str] = None):
+        """Split indices in train/test/val sets."""
+        self.train_idx = self._internal_splitter.train_indices
+        self.val_idx = self._internal_splitter.validation_indices
+        self.test_idx = np.array([], dtype=int)
+
+    def train_dataloader(self):
+        """Create the train data loader."""
+        return self.data_loader_cls(
+            self.adata_manager,
+            indices=self.train_idx,
+            shuffle=True,
+            drop_last=False,
+            load_sparse_tensor=self.load_sparse_tensor,
+            pin_memory=self.pin_memory,
+            **self.data_loader_kwargs,
+        )
+
+    def val_dataloader(self):
+        """Create the validation data loader."""
+        if len(self.val_idx) > 0:
+            return self.data_loader_cls(
+                self.adata_manager,
+                indices=self.val_idx,
+                shuffle=False,
+                drop_last=False,
+                pin_memory=self.pin_memory,
+                **self.data_loader_kwargs,
+            )
+        else:
+            pass
+
+    def test_dataloader(self):
+        """Create the test data loader."""
+        if len(self.test_idx) > 0:
+            return self.data_loader_class(
+                self.adata_manager,
+                indices=self.test_idx,
+                shuffle=False,
+                drop_last=False,
+                pin_memory=self.pin_memory,
+                **self.data_loader_kwargs,
+            )
+        else:
+            pass
