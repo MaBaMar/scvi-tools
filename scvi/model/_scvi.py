@@ -6,7 +6,6 @@ from typing import Literal
 
 import numpy as np
 from anndata import AnnData
-
 from scvi import REGISTRY_KEYS, settings
 from scvi._types import MinifiedDataType
 from scvi.data import AnnDataManager
@@ -22,6 +21,7 @@ from scvi.data.fields import (
     ObsmField,
     StringUnsField,
 )
+from scvi.dataloaders._data_splitting import DefaultDataSplitter
 from scvi.model._utils import _init_library_size
 from scvi.model.base import UnsupervisedTrainingMixin
 from scvi.model.utils import get_minified_adata_scrna
@@ -124,7 +124,8 @@ class SCVI(
         gene_likelihood: Literal["zinb", "nb", "poisson"] = "zinb",
         latent_distribution: Literal["normal", "ln"] = "normal",
         prior_distribution: Literal["sdnormal", "normalflow", "mixofgaus", "vamp"] = "sdnormal",
-        prior_kwargs: dict| None = None,
+        prior_kwargs: dict | None = None,
+        use_default_data_splitter=False,
         **kwargs,
     ):
         super().__init__(adata)
@@ -191,6 +192,9 @@ class SCVI(
             self.module.minified_data_type = self.minified_data_type
 
         self.init_params_ = self._get_init_params(locals())
+
+        if use_default_data_splitter:
+            self._data_splitter_cls = DefaultDataSplitter
 
     @classmethod
     @setup_anndata_dsp.dedent
