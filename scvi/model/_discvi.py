@@ -8,7 +8,6 @@ import numpy as np
 import torch
 from anndata import AnnData
 from scvi.dataloaders._data_splitting import DefaultDataSplitter
-from overrides import overrides
 from scvi import REGISTRY_KEYS, settings
 from scvi.data import AnnDataManager
 from scvi.data.fields import LayerField, CategoricalObsField
@@ -140,7 +139,6 @@ class DiSCVI(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         cls.register_manager(adata_manager)
 
     @torch.inference_mode()
-    @overrides
     def get_latent_representation(
         self,
         adata: Optional[AnnData] = None,
