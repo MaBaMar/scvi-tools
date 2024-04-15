@@ -352,7 +352,7 @@ class DIVA(BaseModuleClass):
 
         # priors
         p_zd_d, _ = self.prior_zd_d_encoder(one_hot(batch_index, self.n_batch))
-        p_zx = Normal(torch.zeros_like(zd_x), torch.ones_like(zd_x))
+        p_zx = Normal(torch.zeros_like(zx_x), torch.ones_like(zx_x))
         p_zy_y, _ = self.prior_zy_y_encoder(one_hot(y, self.n_labels))
 
         # auxiliary losses
