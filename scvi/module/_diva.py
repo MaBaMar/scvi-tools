@@ -396,12 +396,24 @@ class DIVA(BaseModuleClass):
         zy_x = inference_outputs["zy_x"]
         zd_x = inference_outputs["zd_x"]
 
-        kl_zx = torch.sum(inference_outputs["q_zx_x"].log_prob(zx_x) - generative_outputs["p_zx"].log_prob(zx_x),
-                          dim=-1)
-        kl_zy = torch.sum(inference_outputs["q_zy_x"].log_prob(zy_x) - generative_outputs["p_zy_y"].log_prob(zy_x),
-                          dim=-1)
-        kl_zd = torch.sum(inference_outputs["q_zd_x"].log_prob(zd_x) - generative_outputs["p_zd_d"].log_prob(zd_x),
-                          dim=-1)
+        # kl_zx = torch.sum(inference_outputs["q_zx_x"].log_prob(zx_x) - generative_outputs["p_zx"].log_prob(zx_x),
+        #                   dim=-1)
+        kl_zx = kl(
+            inference_outputs["q_zx_x"],
+            generative_outputs["p_zx"]
+        ).sum(dim=1)
+        # kl_zy = torch.sum(inference_outputs["q_zy_x"].log_prob(zy_x) - generative_outputs["p_zy_y"].log_prob(zy_x),
+        #                   dim=-1)
+        kl_zy = kl(
+            inference_outputs["q_zy_x"],
+            generative_outputs["p_zy_y"]
+        ).sum(dim=1)
+        # kl_zd = torch.sum(inference_outputs["q_zd_x"].log_prob(zd_x) - generative_outputs["p_zd_d"].log_prob(zd_x),
+        #                   dim=-1)
+        kl_zd = kl(
+            inference_outputs["q_zd_x"],
+            generative_outputs["p_zd_d"]
+        ).sim(dim=1)
 
         if not self.use_observed_lib_size:
             kl_l = kl(
