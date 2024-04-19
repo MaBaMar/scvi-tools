@@ -444,7 +444,7 @@ class DIVA(BaseModuleClass):
     def predict(self, tensors) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         :param tensors: Input tensors of batch as provided by dataloader
-        :return: Tuple of (y_hat, y) where y_hat is the prediction and y the ground truth
+        :return: Tuple of (y_true, y_pred) where y_pred is the prediction and y_true the ground truth
         """
         x = tensors[REGISTRY_KEYS.X_KEY]
 
@@ -454,6 +454,6 @@ class DIVA(BaseModuleClass):
             x_ = x
 
         _, zy_x = self.posterior_zy_x_encoder(x_)
-        _, y_hat = self.aux_y_enc(zy_x).max(dim=1)
-        y = tensors[REGISTRY_KEYS.LABELS_KEY]
-        return y_hat, y
+        _, y_pred = self.aux_y_enc(zy_x).max(dim=1)
+        y_true = tensors[REGISTRY_KEYS.LABELS_KEY]
+        return y_true, y_pred

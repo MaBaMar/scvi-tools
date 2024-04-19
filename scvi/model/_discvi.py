@@ -241,17 +241,17 @@ class DiSCVI(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         batch_size: Optional[int] = None,
     ):
         """
-        :returns: (y, y_hat)
+        :returns: (y_true, y_pred)
         """
-        predictions = []
-        labels = []
+        y_pred = []
+        y_true = []
         self._check_if_trained(warn=False)
         adata = self._validate_anndata(adata)
         scdl = self._make_data_loader(adata=adata, indices=indices, batch_size=batch_size)
 
         for tensors in scdl:
             model_pred = self.module.predict(tensors)
-            predictions.append(model_pred[0].cpu())
-            labels.append(model_pred[1].cpu())
+            y_true.append(model_pred[0].cpu())
+            y_pred.append(model_pred[1].cpu())
 
-        return torch.cat(labels, dim=0), torch.cat(predictions, dim=0)
+        return torch.cat(y_true, dim=0), torch.cat(y_pred, dim=0)
