@@ -413,7 +413,7 @@ class DIVA(BaseModuleClass):
         kl_zd = kl(
             inference_outputs["q_zd_x"],
             generative_outputs["p_zd_d"]
-        ).sim(dim=1)
+        ).sum(dim=1)
 
         if not self.use_observed_lib_size:
             kl_l = kl(
