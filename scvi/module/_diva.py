@@ -1,17 +1,20 @@
 """DIVA implementation supervised"""
 from __future__ import annotations
 
+import warnings
 from typing import Literal, Optional, Tuple
 
 import numpy as np
 import torch
 import torch.nn.functional as F
+from anndata import AnnData
 from scvi import REGISTRY_KEYS
 from scvi._types import Tunable
 from scvi.distributions import ZeroInflatedNegativeBinomial, NegativeBinomial, Poisson
 from scvi.module.base import BaseModuleClass, LossOutput, auto_move_data
 from scvi.nn import DecoderSCVI, Encoder
 from scvi.nn import one_hot
+from sklearn.utils.class_weight import compute_class_weight
 from torch import nn
 from torch.distributions import Normal
 from torch.distributions import kl_divergence as kl
@@ -24,19 +27,22 @@ class DIVA(BaseModuleClass):
     zx is 'other effects' latent-space and l models the library size (in our settings, we use observed l, not l
     as probability distribution) """
 
+    _ce_weights_y = None
+    _ce_weights_d = None
+
     def __init__(
         self,
         n_input: int,
         n_batch: int,
         n_labels: int,
-        n_latent_d: int,
-        n_latent_x: int,
-        n_latent_y: int,
+        n_latent_d: int = 3,
+        n_latent_x: int = 4,
+        n_latent_y: int = 10,
         beta_d: float = 1,
-        beta_x: float = 1,
+        beta_x: float = 13,
         beta_y: float = 1,
-        alpha_d: float = 1,
-        alpha_y: float = 1,
+        alpha_d: float = 200,
+        alpha_y: float = 1500,
         priors_n_hidden: int = 32,
         priors_n_layers: int = 1,
         posterior_n_hidden: int = 128,
@@ -430,8 +436,15 @@ class DIVA(BaseModuleClass):
         # auxiliary losses
         d_pred: torch.Tensor
 
-        aux_d = F.cross_entropy(generative_outputs["d_hat"], d.view(-1, ))
-        aux_y = F.cross_entropy(generative_outputs["y_hat"], y.view(-1, ))
+        # weights for cross entropy
+        if self._ce_weights_y is None:
+            warnings.warn(
+                "No weights initialized for cross entropy of DIVA model.\n"
+                "Use `.init_ce_weights(adata)` to initialize them.")
+
+        aux_d = F.cross_entropy(generative_outputs["d_hat"], d.view(-1, ), )
+        aux_y = F.cross_entropy(generative_outputs["y_hat"], y.view(-1, ),
+                                weight=torch.tensor(self._ce_weights_y, device=x.device, dtype=x.dtype))
         aux_loss = self.alpha_d * aux_d + self.alpha_y * aux_y
 
         loss = torch.mean(reconst_loss + weighted_kl_local) + aux_loss
@@ -469,3 +482,11 @@ class DIVA(BaseModuleClass):
         _, y_pred = self.aux_y_enc(zy_x).max(dim=1)
         y_true = tensors[REGISTRY_KEYS.LABELS_KEY]
         return y_true, y_pred
+
+    def init_ce_weight_y(self, adata: AnnData, indices, label_key: str):
+        # BEWARE!!! Validation loss will use training weighting for CE!
+        # print(cat_d.min(),cat_d.max())
+        # print(np.array(range(self.n_batch)))
+        cat_y = adata[indices].obs[label_key].cat.codes
+        self._ce_weights_y = compute_class_weight('balanced', classes=np.array(range(self.n_labels)), y=cat_y)
+        pass
