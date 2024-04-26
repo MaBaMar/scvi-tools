@@ -1395,7 +1395,3 @@ class ReferenceQueryPlan(TrainingPlan):
     def validation_step(self, batch, batch_idx):
         super().validation_step(batch, batch_idx)
         self._log_scores(batch, mode='validation')
-
-    def training_step(self, batch, batch_idx):
-        super().training_step(batch, batch_idx)
-        self._log_scores(batch, mode='train')

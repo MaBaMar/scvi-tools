@@ -497,7 +497,7 @@ class DIVA(BaseModuleClass):
         mc_samples: int = 5000,
     ):
         inference_inputs = self._get_inference_input(tensors)
-        outputs = self.module.inference(**inference_inputs)
+        outputs = self.inference(**inference_inputs)
         q_zd_x = outputs["q_zd_x"]
         q_zx_x = outputs["q_zx_x"]
         q_zy_x = outputs["q_zy_x"]
