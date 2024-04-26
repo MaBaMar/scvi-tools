@@ -41,7 +41,7 @@ class DIVA(BaseModuleClass):
         beta_d: float = 1,
         beta_x: float = 13,
         beta_y: float = 1,
-        alpha_d: float = 200,
+        alpha_d: float = 1000,
         alpha_y: float = 1500,
         priors_n_hidden: int = 32,
         priors_n_layers: int = 1,
@@ -489,4 +489,40 @@ class DIVA(BaseModuleClass):
         # print(np.array(range(self.n_batch)))
         cat_y = adata[indices].obs[label_key].cat.codes
         self._ce_weights_y = compute_class_weight('balanced', classes=np.array(range(self.n_labels)), y=cat_y)
-        pass
+
+    def get_latent(
+        self,
+        tensors,
+        give_mean: bool = True,
+        mc_samples: int = 5000,
+    ):
+        inference_inputs = self._get_inference_input(tensors)
+        outputs = self.module.inference(**inference_inputs)
+        q_zd_x = outputs["q_zd_x"]
+        q_zx_x = outputs["q_zx_x"]
+        q_zy_x = outputs["q_zy_x"]
+
+        if give_mean:
+            if self.module.latent_distribution == "ln":
+                samples_zd_x = q_zd_x.sample([mc_samples])
+                samples_zx_x = q_zx_x.sample([mc_samples])
+                samples_zy_x = q_zy_x.sample([mc_samples])
+
+                zd_x = torch.nn.functional.softmax(samples_zd_x, dim=-1)
+                zx_x = torch.nn.functional.softmax(samples_zx_x, dim=-1)
+                zy_x = torch.nn.functional.softmax(samples_zy_x, dim=-1)
+
+                zd_x = zd_x.mean(dim=0)
+                zx_x = zx_x.mean(dim=0)
+                zy_x = zy_x.mean(dim=0)
+
+            else:
+                zd_x = q_zd_x.loc
+                zx_x = q_zx_x.loc
+                zy_x = q_zy_x.loc
+        else:
+            zd_x = outputs["zd_x"]
+            zx_x = outputs["zx_x"]
+            zy_x = outputs["zy_x"]
+
+        return [torch.cat([zd_x.cpu(), zx_x.cpu(), zy_x.cpu()], dim=1)]

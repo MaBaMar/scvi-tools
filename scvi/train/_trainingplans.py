@@ -14,8 +14,6 @@ import torch
 import torchmetrics.functional as tmf
 from lightning.pytorch.strategies.ddp import DDPStrategy
 from pyro.nn import PyroModule
-from torch.optim.lr_scheduler import ReduceLROnPlateau
-
 from scvi import METRIC_KEYS, REGISTRY_KEYS
 from scvi._types import Tunable, TunableMixin
 from scvi.module import Classifier
@@ -27,6 +25,8 @@ from scvi.module.base import (
     TrainStateWithState,
 )
 from scvi.nn import one_hot
+from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torchmetrics import Accuracy, F1Score
 
 from ._metrics import ElboMetric
 
@@ -1362,3 +1362,40 @@ class JaxTrainingPlan(TrainingPlan):
 
     def forward(self, *args, **kwargs):
         pass
+
+
+class ReferenceQueryPlan(TrainingPlan):
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.accuracy = Accuracy(task='multiclass', num_classes=self.module.n_labels)
+        self.balanced_accuracy = Accuracy(task='multiclass', num_classes=self.module.n_labels, average='macro')
+        self.f1 = F1Score(task='multiclass', num_classes=self.module.n_labels, average='macro')
+
+    @torch.inference_mode()
+    def _log_scores(self, batch, mode: Literal['train', 'validation']):
+        y_true, y_pred = self.module.predict(batch)
+        y_true = y_true.ravel()
+        self.balanced_accuracy(y_pred, y_true)
+        self.accuracy(y_pred, y_true)
+        self.f1(y_pred, y_true)
+
+        self.log_dict({
+            f'balanced accuracy {mode}': self.balanced_accuracy,
+            f'accuracy {mode}': self.accuracy,
+            f'f1 {mode}': self.f1,
+        },
+            False,
+            on_step=False,
+            on_epoch=True,
+            batch_size=len(y_true),
+            sync_dist=self.use_sync_dist,
+        )
+
+    def validation_step(self, batch, batch_idx):
+        super().validation_step(batch, batch_idx)
+        self._log_scores(batch, mode='validation')
+
+    def training_step(self, batch, batch_idx):
+        super().training_step(batch, batch_idx)
+        self._log_scores(batch, mode='train')
