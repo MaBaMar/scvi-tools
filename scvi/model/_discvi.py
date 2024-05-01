@@ -196,7 +196,36 @@ class DiSCVI(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
             raise NotImplementedError
 
         for tensors in scdl:
-            latent += self.module.get_latent(tensors, give_mean=give_mean, mc_samples=mc_samples)
+            inference_inputs = self.module._get_inference_input(tensors)
+            outputs = self.module.inference(**inference_inputs)
+            q_zd_x = outputs["q_zd_x"]
+            q_zx_x = outputs["q_zx_x"]
+            q_zy_x = outputs["q_zy_x"]
+
+            if give_mean:
+                if self.module.latent_distribution == "ln":
+                    samples_zd_x = q_zd_x.sample([mc_samples])
+                    samples_zx_x = q_zx_x.sample([mc_samples])
+                    samples_zy_x = q_zy_x.sample([mc_samples])
+
+                    zd_x = torch.nn.functional.softmax(samples_zd_x, dim=-1)
+                    zx_x = torch.nn.functional.softmax(samples_zx_x, dim=-1)
+                    zy_x = torch.nn.functional.softmax(samples_zy_x, dim=-1)
+
+                    zd_x = zd_x.mean(dim=0)
+                    zx_x = zx_x.mean(dim=0)
+                    zy_x = zy_x.mean(dim=0)
+
+                else:
+                    zd_x = q_zd_x.loc
+                    zx_x = q_zx_x.loc
+                    zy_x = q_zy_x.loc
+            else:
+                zd_x = outputs["zd_x"]
+                zx_x = outputs["zx_x"]
+                zy_x = outputs["zy_x"]
+
+            latent += [torch.cat([zd_x.cpu(), zx_x.cpu(), zy_x.cpu()], dim=1)]
 
         return torch.cat(latent).numpy()
 

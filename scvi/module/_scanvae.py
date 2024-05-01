@@ -102,6 +102,7 @@ class SCANVAE(VAE):
         classifier_parameters: Optional[dict] = None,
         use_batch_norm: Tunable[Literal["encoder", "decoder", "none", "both"]] = "both",
         use_layer_norm: Tunable[Literal["encoder", "decoder", "none", "both"]] = "none",
+        use_default_data_splitter=False,
         **vae_kwargs,
     ):
         super().__init__(
@@ -120,6 +121,8 @@ class SCANVAE(VAE):
             use_layer_norm=use_layer_norm,
             **vae_kwargs,
         )
+        
+        # TODO: datasplitter support?
 
         classifier_parameters = classifier_parameters or {}
         use_batch_norm_encoder = use_batch_norm == "encoder" or use_batch_norm == "both"
