@@ -12,8 +12,7 @@ from scvi import REGISTRY_KEYS
 from scvi._types import Tunable
 from scvi.distributions import ZeroInflatedNegativeBinomial, NegativeBinomial, Poisson
 from scvi.module.base import BaseModuleClass, LossOutput, auto_move_data
-from scvi.nn import DecoderSCVI, Encoder
-from scvi.nn import one_hot
+from scvi.nn import DecoderSCVI, Encoder, one_hot
 from sklearn.utils.class_weight import compute_class_weight
 from torch import nn
 from torch.distributions import Normal
@@ -35,7 +34,7 @@ class DIVA(BaseModuleClass):
         n_input: int,
         n_batch: int,
         n_labels: int,
-        n_latent_d: int = 3,
+        n_latent_d: int = 4,
         n_latent_x: int = 4,
         n_latent_y: int = 10,
         beta_d: float = 1,
@@ -377,7 +376,8 @@ class DIVA(BaseModuleClass):
         tensors,
         inference_outputs,
         generative_outputs,
-        kl_weight: float = 1,  # epsilon
+        kl_weight: float = 1.0,  # epsilon
+        ce_weight: float = 1.0,
         **kwargs
     ) -> LossOutput:
 
@@ -398,11 +398,6 @@ class DIVA(BaseModuleClass):
         # required when solving the model reconstruction loss with monte carlo approximations
 
         reconst_loss = -generative_outputs["px_recon"].log_prob(x).sum(-1)
-
-        # kl terms
-        zx_x = inference_outputs["zx_x"]
-        zy_x = inference_outputs["zy_x"]
-        zd_x = inference_outputs["zd_x"]
 
         # kl_zx = torch.sum(inference_outputs["q_zx_x"].log_prob(zx_x) - generative_outputs["p_zx"].log_prob(zx_x),
         #                   dim=-1)
@@ -449,7 +444,7 @@ class DIVA(BaseModuleClass):
                                 weight=torch.tensor(self._ce_weights_y, device=x.device, dtype=x.dtype))
         aux_loss = self.alpha_d * aux_d + self.alpha_y * aux_y
 
-        loss = torch.mean(reconst_loss + weighted_kl_local) + aux_loss
+        loss = torch.mean(reconst_loss + weighted_kl_local) + ce_weight * aux_loss
 
         kl_local = {
             "kl_divergence_l": kl_l,

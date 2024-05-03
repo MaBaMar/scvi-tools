@@ -16,7 +16,7 @@ from scvi.dataloaders._data_splitting import DefaultDataSplitter
 from scvi.model._utils import _init_library_size, get_max_epochs_heuristic, use_distributed_sampler
 from scvi.model.base import RNASeqMixin, VAEMixin, BaseModelClass, UnsupervisedTrainingMixin
 from scvi.module import DIVA
-from scvi.train._trainingplans import ReferenceQueryPlan
+from scvi.train._trainingplans import scDIVA_plan
 from scvi.utils import setup_anndata_dsp
 
 logger = logging.getLogger(__name__)
@@ -51,7 +51,7 @@ class DiSCVI(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         super().__init__(adata)
 
         # TODO: potentially overwrite training plan and train runner of _training_mixin.py
-        self._training_plan_cls = ReferenceQueryPlan
+        self._training_plan_cls = scDIVA_plan
         # _train_runner_cls = TrainRunner
 
         self._module_kwargs = {
@@ -372,8 +372,12 @@ class DiSCVI(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
             )
 
         plan_kwargs = plan_kwargs or {}
-        if not 'n_epochs_kl_warmup' in plan_kwargs:
+        if 'n_epochs_kl_warmup' not in plan_kwargs:
             plan_kwargs['n_epochs_kl_warmup'] = min(400, max_epochs)
+
+        if 'n_epochs_warmup' not in plan_kwargs:
+            plan_kwargs['n_epochs_warmup'] = max_epochs
+
         training_plan = self._training_plan_cls(self.module, **plan_kwargs)
 
         es = "early_stopping"

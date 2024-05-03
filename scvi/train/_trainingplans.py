@@ -78,6 +78,47 @@ def _compute_kl_weight(
     return max_kl_weight
 
 
+def _compute_classifier_weight(epoch: int,
+                               n_epochs_warmup: int,
+                               max_ce_weight: float = 1.0,
+                               min_ce_weight: float = 0.0,
+                               ce_scale_threshold: float = 0.0
+                               ) -> float:
+    """Computes the cross-entropy weight for the current step or epoch.
+        Scales from `min_ce_weight` to `max_ce_weight` in `n_steps_ce_warmup` epochs by keeping the weight at
+        `min_ce_weight` for `ce_scale_threshold` * `n_steps_ce_warmup` epochs and linearly increasing to
+        `max_ce_weight` for the remaining `ce_scale_threshold` * (1-`n_steps_ce_warmup`) epochs. After hitting
+        the warmup cap, the value will remain constant at `max_ce_weight`.
+
+        Parameters
+        ----------
+        epoch
+            Current epoch.
+        n_epochs_warmup
+            Number of epochs to scale weight on cross-entropy loss from
+            `min_ce_weight` to `max_ce_weight`
+        max_ce_weight
+            Maximum scaling factor on the cross-entropy loss during training
+        min_ce_weight
+            Minimum scaling factor on the cross-entropy loss during training
+        """
+    if 1 < ce_scale_threshold or 0 > ce_scale_threshold:
+        raise ValueError('classifier_scale_threshold must lie within the interval [0.0, 1.0]')
+    if min_ce_weight > max_ce_weight:
+        raise ValueError('min value cannot exceed maximum')
+
+    threshold_cap = n_epochs_warmup * ce_scale_threshold
+
+    if epoch >= n_epochs_warmup:
+        return max_ce_weight
+    elif epoch >= threshold_cap:
+        return ((max_ce_weight - min_ce_weight) *
+                ((epoch - threshold_cap) / (n_epochs_warmup - threshold_cap)) ** 2
+                + min_ce_weight)
+    else:
+        return min_ce_weight
+
+
 class TrainingPlan(TunableMixin, pl.LightningModule):
     """Lightning module task to train scvi-tools modules.
 
@@ -1364,13 +1405,94 @@ class JaxTrainingPlan(TrainingPlan):
         pass
 
 
-class ReferenceQueryPlan(TrainingPlan):
+class scDIVA_plan(TrainingPlan):
+    def __init__(
+        self,
+        module: BaseModuleClass,
+        *,
+        optimizer: Tunable[Literal["Adam", "AdamW", "Custom"]] = "Adam",
+        optimizer_creator: Optional[TorchOptimizerCreator] = None,
+        lr: Tunable[float] = 1e-3,
+        weight_decay: Tunable[float] = 1e-6,
+        eps: Tunable[float] = 0.01,
+        n_steps_kl_warmup: Tunable[int] = None,
+        n_epochs_kl_warmup: Tunable[int] = 400,
+        reduce_lr_on_plateau: Tunable[bool] = False,
+        lr_factor: Tunable[float] = 0.6,
+        lr_patience: Tunable[int] = 30,
+        lr_threshold: Tunable[float] = 0.0,
+        lr_scheduler_metric: Literal[
+            "elbo_validation", "reconstruction_loss_validation", "kl_local_validation"
+        ] = "elbo_validation",
+        lr_min: Tunable[float] = 0,
+        max_kl_weight: Tunable[float] = 1.0,
+        min_kl_weight: Tunable[float] = 0.0,
+        max_classifier_weight: Tunable[float] = 1.0,
+        min_classifier_weight: Tunable[float] = 1.0,
+        n_epochs_warmup: Tunable[int],
+        classifier_scale_threshold: Tunable[float] = 0.9,
+        **loss_kwargs,
+    ):
+        super().__init__(module=module,
+                         optimizer=optimizer,
+                         optimizer_creator=optimizer_creator,
+                         lr=lr,
+                         weight_decay=weight_decay,
+                         eps=eps,
+                         n_steps_kl_warmup=n_steps_kl_warmup,
+                         n_epochs_kl_warmup=n_epochs_kl_warmup,
+                         reduce_lr_on_plateau=reduce_lr_on_plateau,
+                         lr_factor=lr_factor,
+                         lr_patience=lr_patience,
+                         lr_threshold=lr_threshold,
+                         lr_scheduler_metric=lr_scheduler_metric,
+                         lr_min=lr_min,
+                         max_kl_weight=max_kl_weight,
+                         min_kl_weight=min_kl_weight,
+                         **loss_kwargs)
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
         self.accuracy = Accuracy(task='multiclass', num_classes=self.module.n_labels)
         self.balanced_accuracy = Accuracy(task='multiclass', num_classes=self.module.n_labels, average='macro')
         self.f1 = F1Score(task='multiclass', num_classes=self.module.n_labels, average='macro')
+
+        self.max_classifier_weight = max_classifier_weight
+        self.min_classifier_weight = min_classifier_weight
+        self.max_epochs = n_epochs_warmup
+        self.classifier_scale_threshold = classifier_scale_threshold
+
+        if "ce_weight" in self._loss_args:
+            self.loss_kwargs.update({"ce_weight": self.ce_weight})
+
+    @property
+    def ce_weight(self):
+        return _compute_classifier_weight(
+            epoch=self.current_epoch,
+            n_epochs_warmup=self.max_epochs,
+            max_ce_weight=self.max_classifier_weight,
+            min_ce_weight=self.min_classifier_weight,
+            ce_scale_threshold=self.classifier_scale_threshold
+        )
+
+    def training_step(self, batch, batch_idx):
+        """Training step for the model."""
+        if "kl_weight" in self.loss_kwargs:
+            kl_weight = self.kl_weight
+            self.loss_kwargs.update({"kl_weight": kl_weight})
+            self.log("kl_weight", kl_weight, on_step=True, on_epoch=False)
+        if "ce_weight" in self.loss_kwargs:
+            ce_weight = self.ce_weight
+            self.loss_kwargs.update({"ce_weight": ce_weight})
+            self.log("ce_weight", ce_weight, on_step=True, on_epoch=False)
+        _, _, scvi_loss = self.forward(batch, loss_kwargs=self.loss_kwargs)
+        self.log(
+            "train_loss",
+            scvi_loss.loss,
+            on_epoch=True,
+            prog_bar=True,
+            sync_dist=self.use_sync_dist,
+        )
+        self.compute_and_log_metrics(scvi_loss, self.train_metrics, "train")
+        return scvi_loss.loss
 
     @torch.inference_mode()
     def _log_scores(self, batch, mode: Literal['train', 'validation']):
@@ -1395,3 +1517,8 @@ class ReferenceQueryPlan(TrainingPlan):
     def validation_step(self, batch, batch_idx):
         super().validation_step(batch, batch_idx)
         self._log_scores(batch, mode='validation')
+
+# class ReferenceQueryPlan(TrainingPlan):
+#
+#     def __init__(self, *args, **kwargs):
+#         super().__init__(*args, **kwargs)
