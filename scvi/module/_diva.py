@@ -57,6 +57,7 @@ class DIVA(BaseModuleClass):
         latent_distribution: Literal["normal", "ln"] = "normal",
         use_batch_norm: Literal["encoder", "decoder", "none", "both"] = "both",
         use_layer_norm: Literal["encoder", "decoder", "none", "both"] = "none",
+        use_linear_decoder: bool = False,
         use_size_factor_key: bool = False,
         use_observed_lib_size: Tunable[bool] = True,
         library_log_means: Optional[np.ndarray] = None,
@@ -129,6 +130,7 @@ class DIVA(BaseModuleClass):
             n_hidden=decoder_n_hidden,
             use_batch_norm=use_batch_norm_decoder,
             use_layer_norm=use_layer_norm_decoder,
+            use_activation=not use_linear_decoder,
             **_extra_decoder_kwargs
         )
 
