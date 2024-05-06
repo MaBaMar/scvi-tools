@@ -8,6 +8,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from anndata import AnnData
+from matplotlib.patheffects import Normal
 from scvi import REGISTRY_KEYS
 from scvi._types import Tunable
 from scvi.distributions import ZeroInflatedNegativeBinomial, NegativeBinomial, Poisson
@@ -60,6 +61,7 @@ class DIVA(BaseModuleClass):
         use_linear_decoder: bool = False,
         use_size_factor_key: bool = False,
         use_observed_lib_size: Tunable[bool] = True,
+        use_learnable_priors: Tunable[bool] = True,
         library_log_means: Optional[np.ndarray] = None,
         library_log_vars: Optional[np.ndarray] = None,
         extra_encoder_kwargs: Optional[dict] = None,
@@ -96,6 +98,8 @@ class DIVA(BaseModuleClass):
 
         self.alpha_d = alpha_d
         self.alpha_y = alpha_y
+
+        self.use_learnable_priors = use_learnable_priors
 
         if self.dispersion == "gene":
             self.px_r = torch.nn.Parameter(torch.randn(n_input))
@@ -137,29 +141,30 @@ class DIVA(BaseModuleClass):
         """model priors p(xz), p_theta(zd|d), p_theta(zy|y)"""
 
         # calling forward on those encoders directly returns a distribution dist and sample latent
-        self.prior_zd_d_encoder = Encoder(
-            n_input=n_batch,
-            n_output=n_latent_d,
-            n_layers=priors_n_layers,
-            n_hidden=priors_n_hidden,
-            dropout_rate=self.dropout_rate,
-            use_batch_norm=use_batch_norm_encoder,
-            use_layer_norm=use_layer_norm_encoder,
-            return_dist=True,
-            **_extra_encoder_kwargs
-        )
+        if use_learnable_priors:
+            self.prior_zd_d_encoder = Encoder(
+                n_input=n_batch,
+                n_output=n_latent_d,
+                n_layers=priors_n_layers,
+                n_hidden=priors_n_hidden,
+                dropout_rate=self.dropout_rate,
+                use_batch_norm=use_batch_norm_encoder,
+                use_layer_norm=use_layer_norm_encoder,
+                return_dist=True,
+                **_extra_encoder_kwargs
+            )
 
-        self.prior_zy_y_encoder = Encoder(
-            n_input=n_labels,
-            n_output=n_latent_y,
-            n_layers=priors_n_layers,
-            n_hidden=priors_n_hidden,
-            dropout_rate=self.dropout_rate,
-            use_batch_norm=use_batch_norm_encoder,
-            use_layer_norm=use_layer_norm_encoder,
-            return_dist=True,
-            **_extra_encoder_kwargs
-        )
+            self.prior_zy_y_encoder = Encoder(
+                n_input=n_labels,
+                n_output=n_latent_y,
+                n_layers=priors_n_layers,
+                n_hidden=priors_n_hidden,
+                dropout_rate=self.dropout_rate,
+                use_batch_norm=use_batch_norm_encoder,
+                use_layer_norm=use_layer_norm_encoder,
+                return_dist=True,
+                **_extra_encoder_kwargs
+            )
 
         """library model q(l|x)"""
         # l encoder goes from n_input-dimensional data to 1-d library size
@@ -360,9 +365,15 @@ class DIVA(BaseModuleClass):
             )
 
         # priors
-        p_zd_d, _ = self.prior_zd_d_encoder(one_hot(batch_index, self.n_batch))
+        if self.use_learnable_priors:
+            p_zd_d, _ = self.prior_zd_d_encoder(one_hot(batch_index, self.n_batch))
+            p_zy_y, _ = self.prior_zy_y_encoder(one_hot(y, self.n_labels))
+
+        else:
+            p_zd_d = Normal(torch.zeros_like(zd_x), torch.ones_like(zd_x))
+            p_zy_y = Normal(torch.zeros_like(zy_x), torch.ones_like(zy_x))
+
         p_zx = Normal(torch.zeros_like(zx_x), torch.ones_like(zx_x))
-        p_zy_y, _ = self.prior_zy_y_encoder(one_hot(y, self.n_labels))
 
         # auxiliary losses
         d_hat = self.aux_d_zd_enc(zd_x)
