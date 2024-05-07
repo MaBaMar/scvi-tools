@@ -205,27 +205,33 @@ class DiSCVI(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
             if give_mean:
                 if self.module.latent_distribution == "ln":
                     samples_zd_x = q_zd_x.sample([mc_samples])
-                    samples_zx_x = q_zx_x.sample([mc_samples])
                     samples_zy_x = q_zy_x.sample([mc_samples])
 
                     zd_x = torch.nn.functional.softmax(samples_zd_x, dim=-1)
-                    zx_x = torch.nn.functional.softmax(samples_zx_x, dim=-1)
                     zy_x = torch.nn.functional.softmax(samples_zy_x, dim=-1)
 
                     zd_x = zd_x.mean(dim=0)
-                    zx_x = zx_x.mean(dim=0)
                     zy_x = zy_x.mean(dim=0)
+
+                    if self.module._use_x_latent:
+                        samples_zx_x = q_zx_x.sample([mc_samples])
+                        zx_x = torch.nn.functional.softmax(samples_zx_x, dim=-1)
+                        zx_x = zx_x.mean(dim=0)
 
                 else:
                     zd_x = q_zd_x.loc
-                    zx_x = q_zx_x.loc
+                    zx_x = q_zx_x.loc if self.module._use_x_latent else None
                     zy_x = q_zy_x.loc
             else:
                 zd_x = outputs["zd_x"]
                 zx_x = outputs["zx_x"]
                 zy_x = outputs["zy_x"]
 
-            latent += [torch.cat([zd_x.cpu(), zx_x.cpu(), zy_x.cpu()], dim=1)]
+            if self.module._use_x_latent:
+                cat_vecs = [zd_x.cpu(), zx_x.cpu(), zy_x.cpu()]
+            else:
+                cat_vecs = [zd_x.cpu(), zy_x.cpu()]
+            latent += [torch.cat(cat_vecs, dim=1)]
 
         return torch.cat(latent).numpy()
 

@@ -1,6 +1,7 @@
 """DIVA implementation supervised"""
 from __future__ import annotations
 
+import sys
 import warnings
 from typing import Literal, Optional, Tuple
 
@@ -29,6 +30,7 @@ class DIVA(BaseModuleClass):
 
     _ce_weights_y = None
     _ce_weights_d = None
+    _use_x_latent = True
 
     def __init__(
         self,
@@ -68,6 +70,12 @@ class DIVA(BaseModuleClass):
         extra_decoder_kwargs: Optional[dict] = None
     ):
         super().__init__()
+
+        if n_latent_x <= 0:
+            print("\nx latent dimension is <= 0. Disabling x latent space. If you want to use the x latent "
+                  "space consider increasing n_latent_x to an int value > 0", file=sys.stderr)
+            n_latent_x = 0
+            self._use_x_latent = False
 
         self.n_input = n_input
         self.n_batch = n_batch
@@ -181,17 +189,18 @@ class DIVA(BaseModuleClass):
         )
 
         """variational posteriors q_phi(zx|x), q_phi(zd|x), q_phi(zy|x)"""
-        self.posterior_zx_x_encoder = Encoder(
-            n_input=n_input,
-            n_output=n_latent_x,
-            n_layers=posterior_n_layers,
-            n_hidden=posterior_n_hidden,
-            distribution=self.latent_distribution,
-            use_batch_norm=use_batch_norm_encoder,
-            use_layer_norm=use_layer_norm_encoder,
-            return_dist=True,
-            **_extra_encoder_kwargs
-        )
+        if self._use_x_latent:
+            self.posterior_zx_x_encoder = Encoder(
+                n_input=n_input,
+                n_output=n_latent_x,
+                n_layers=posterior_n_layers,
+                n_hidden=posterior_n_hidden,
+                distribution=self.latent_distribution,
+                use_batch_norm=use_batch_norm_encoder,
+                use_layer_norm=use_layer_norm_encoder,
+                return_dist=True,
+                **_extra_encoder_kwargs
+            )
 
         self.posterior_zd_x_encoder = Encoder(
             n_input=n_input,
@@ -287,8 +296,11 @@ class DIVA(BaseModuleClass):
 
         # tuples of posterior distribution and drawn latent variable
         q_zd_x, zd_x = self.posterior_zd_x_encoder(x_)
-        q_zx_x, zx_x = self.posterior_zx_x_encoder(x_)
         q_zy_x, zy_x = self.posterior_zy_x_encoder(x_)
+        if self._use_x_latent:
+            q_zx_x, zx_x = self.posterior_zx_x_encoder(x_)
+        else:
+            q_zx_x, zx_x = (None, None)
 
         ql = None
         if not self.use_observed_lib_size:
@@ -297,11 +309,12 @@ class DIVA(BaseModuleClass):
 
         if n_samples > 1:
             utran_zd = q_zd_x.rsample((n_samples,))
-            utran_zx = q_zx_x.rsample((n_samples,))
             utran_zy = q_zy_x.rsample((n_samples,))
             zd_x = self.posterior_zd_x_encoder.z_transformation(utran_zd)
-            zx_x = self.posterior_zx_x_encoder.z_transformation(utran_zx)
             zy_x = self.posterior_zy_x_encoder.z_transformation(utran_zy)
+            if self._use_x_latent:
+                utran_zx = q_zx_x.rsample((n_samples,))
+                zx_x = self.posterior_zx_x_encoder.z_transformation(utran_zx)
             if self.use_observed_lib_size:
                 library = library.unsqueeze(0).expand(
                     (n_samples, library.size(0), library.size(1))
@@ -330,7 +343,7 @@ class DIVA(BaseModuleClass):
 
         px_scale, px_r, px_rate, px_dropout = self.reconst_dxy_decoder(
             self.dispersion,
-            torch.cat([zd_x, zx_x, zy_x], dim=-1),
+            torch.cat([zd_x, zx_x, zy_x] if self._use_x_latent else [zd_x, zy_x], dim=-1),
             size_factor
         )
 
@@ -373,7 +386,7 @@ class DIVA(BaseModuleClass):
             p_zd_d = Normal(torch.zeros_like(zd_x), torch.ones_like(zd_x))
             p_zy_y = Normal(torch.zeros_like(zy_x), torch.ones_like(zy_x))
 
-        p_zx = Normal(torch.zeros_like(zx_x), torch.ones_like(zx_x))
+        p_zx = Normal(torch.zeros_like(zx_x), torch.ones_like(zx_x)) if self._use_x_latent else None
 
         # auxiliary losses
         d_hat = self.aux_d_zd_enc(zd_x)
@@ -412,20 +425,11 @@ class DIVA(BaseModuleClass):
 
         reconst_loss = -generative_outputs["px_recon"].log_prob(x).sum(-1)
 
-        # kl_zx = torch.sum(inference_outputs["q_zx_x"].log_prob(zx_x) - generative_outputs["p_zx"].log_prob(zx_x),
-        #                   dim=-1)
-        kl_zx = kl(
-            inference_outputs["q_zx_x"],
-            generative_outputs["p_zx"]
-        ).sum(dim=1)
-        # kl_zy = torch.sum(inference_outputs["q_zy_x"].log_prob(zy_x) - generative_outputs["p_zy_y"].log_prob(zy_x),
-        #                   dim=-1)
         kl_zy = kl(
             inference_outputs["q_zy_x"],
             generative_outputs["p_zy_y"]
         ).sum(dim=1)
-        # kl_zd = torch.sum(inference_outputs["q_zd_x"].log_prob(zd_x) - generative_outputs["p_zd_d"].log_prob(zd_x),
-        #                   dim=-1)
+
         kl_zd = kl(
             inference_outputs["q_zd_x"],
             generative_outputs["p_zd_d"]
@@ -439,7 +443,15 @@ class DIVA(BaseModuleClass):
         else:
             kl_l = torch.tensor(0.0, device=x.device)
 
-        kl_local_for_warmup = self.beta_x * kl_zx + self.beta_y * kl_zy + self.beta_d * kl_zd
+        kl_local_for_warmup = self.beta_y * kl_zy + self.beta_d * kl_zd
+
+        if self._use_x_latent:
+            kl_zx = kl(
+                inference_outputs["q_zx_x"],
+                generative_outputs["p_zx"]
+            ).sum(dim=1)
+            kl_local_for_warmup += self.beta_x * kl_zx
+
         kl_local_no_warmup = kl_l
         weighted_kl_local = kl_weight * kl_local_for_warmup + kl_local_no_warmup
 
@@ -462,7 +474,7 @@ class DIVA(BaseModuleClass):
         kl_local = {
             "kl_divergence_l": kl_l,
             "kl_divergence_zd": kl_zd,
-            "kl_divergence_zx": kl_zx,
+            "kl_divergence_zx": kl_zx if self._use_x_latent else 0,
             "kl_divergence_zy": kl_zy
         }
 
