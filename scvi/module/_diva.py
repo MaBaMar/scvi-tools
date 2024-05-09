@@ -49,8 +49,6 @@ class DIVA(BaseModuleClass):
         priors_n_layers: int = 1,
         posterior_n_hidden: int = 128,
         posterior_n_layers: int = 1,
-        encoder_zd_x_layers: int = 1,
-        encoder_zd_x_hidden: int = 128,
         decoder_n_hidden: int = 128,
         decoder_n_layers: int = 1,
         dropout_rate: float = 0.1,
@@ -61,6 +59,8 @@ class DIVA(BaseModuleClass):
         use_batch_norm: Literal["encoder", "decoder", "none", "both"] = "both",
         use_layer_norm: Literal["encoder", "decoder", "none", "both"] = "none",
         use_linear_decoder: bool = False,
+        use_linear_batch_classifier: bool = False,
+        use_linear_label_classifier: bool = False,
         use_size_factor_key: bool = False,
         use_observed_lib_size: Tunable[bool] = True,
         use_learnable_priors: Tunable[bool] = True,
@@ -205,8 +205,8 @@ class DIVA(BaseModuleClass):
         self.posterior_zd_x_encoder = Encoder(
             n_input=n_input,
             n_output=n_latent_d,
-            n_layers=encoder_zd_x_layers,
-            n_hidden=encoder_zd_x_hidden,
+            n_layers=posterior_n_layers,
+            n_hidden=posterior_n_hidden,
             distribution=self.latent_distribution,
             use_batch_norm=use_batch_norm_encoder,
             use_layer_norm=use_layer_norm_encoder,
@@ -228,12 +228,12 @@ class DIVA(BaseModuleClass):
 
         """auxiliary tasks q_w(d|zd), q_w(y|zy)"""
         self.aux_d_zd_enc = torch.nn.Sequential(
-            nn.ReLU(),
+            None if use_linear_batch_classifier else nn.ReLU(),
             nn.Linear(n_latent_d, n_batch)
         )
 
         self.aux_y_enc = torch.nn.Sequential(
-            nn.ReLU(),
+            None if use_linear_label_classifier else nn.ReLU(),
             nn.Linear(n_latent_y, n_labels)
         )
 

@@ -82,7 +82,8 @@ def _compute_classifier_weight(epoch: int,
                                n_epochs_warmup: int,
                                max_ce_weight: float = 1.0,
                                min_ce_weight: float = 0.0,
-                               ce_scale_threshold: float = 0.0
+                               ce_scale_threshold: float = 0.0,
+                               curvature: float = 1.0
                                ) -> float:
     """Computes the cross-entropy weight for the current step or epoch.
         Scales from `min_ce_weight` to `max_ce_weight` in `n_steps_ce_warmup` epochs by keeping the weight at
@@ -113,7 +114,7 @@ def _compute_classifier_weight(epoch: int,
         return max_ce_weight
     elif epoch >= threshold_cap:
         return ((max_ce_weight - min_ce_weight) *
-                ((epoch - threshold_cap) / (n_epochs_warmup - threshold_cap)) ** 2
+                ((epoch - threshold_cap) / (n_epochs_warmup - threshold_cap)) ** curvature
                 + min_ce_weight)
     else:
         return min_ce_weight
@@ -1431,6 +1432,7 @@ class scDIVA_plan(TrainingPlan):
         min_classifier_weight: Tunable[float] = 1.0,
         n_epochs_warmup: Tunable[int],
         classifier_scale_threshold: Tunable[float] = 0.9,
+        classifier_curvature: Tunable[float] = 1,
         **loss_kwargs,
     ):
         super().__init__(module=module,
@@ -1459,6 +1461,7 @@ class scDIVA_plan(TrainingPlan):
         self.min_classifier_weight = min_classifier_weight
         self.max_epochs = n_epochs_warmup
         self.classifier_scale_threshold = classifier_scale_threshold
+        self.classifier_curvature = classifier_curvature
 
         if "ce_weight" in self._loss_args:
             self.loss_kwargs.update({"ce_weight": self.ce_weight})
@@ -1470,7 +1473,8 @@ class scDIVA_plan(TrainingPlan):
             n_epochs_warmup=self.max_epochs,
             max_ce_weight=self.max_classifier_weight,
             min_ce_weight=self.min_classifier_weight,
-            ce_scale_threshold=self.classifier_scale_threshold
+            ce_scale_threshold=self.classifier_scale_threshold,
+            curvature=self.classifier_curvature
         )
 
     def training_step(self, batch, batch_idx):
