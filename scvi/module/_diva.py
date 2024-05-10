@@ -14,7 +14,7 @@ from scvi import REGISTRY_KEYS
 from scvi._types import Tunable
 from scvi.distributions import ZeroInflatedNegativeBinomial, NegativeBinomial, Poisson
 from scvi.module.base import BaseModuleClass, LossOutput, auto_move_data
-from scvi.nn import DecoderSCVI, Encoder, one_hot
+from scvi.nn import DecoderSCVI, Encoder, one_hot, LinearDecoderSCVI
 from sklearn.utils.class_weight import compute_class_weight
 from torch import nn
 from torch.distributions import Normal
@@ -31,6 +31,7 @@ class DIVA(BaseModuleClass):
     _ce_weights_y = None
     _ce_weights_d = None
     _use_x_latent = True
+    _unsupervised: bool = False
 
     def __init__(
         self,
@@ -77,6 +78,13 @@ class DIVA(BaseModuleClass):
             n_latent_x = 0
             self._use_x_latent = False
 
+        if n_latent_y <= 0:
+            print("\ny latent dimension is <= 0. Disabling y latent space and automatically switching to unsupervised",
+                  "training mode. If you want to use the y latent space consider increasing",
+                  "n_latent_y to an int value > 0", file=sys.stderr)
+            n_latent_y = 0
+            self._unsupervised = True
+
         self.n_input = n_input
         self.n_batch = n_batch
         self.n_labels = n_labels
@@ -101,11 +109,8 @@ class DIVA(BaseModuleClass):
             self.register_buffer("library_log_vars", torch.from_numpy(library_log_vars).float())
 
         self.beta_d = beta_d
-        self.beta_x = beta_x
-        self.beta_y = beta_y
-
         self.alpha_d = alpha_d
-        self.alpha_y = alpha_y
+        # variables for x and y are initialized only if the latent spaces are used (see later if conditions)
 
         self.use_learnable_priors = use_learnable_priors
 
@@ -135,16 +140,23 @@ class DIVA(BaseModuleClass):
         """reconstruction term p_theta(x|zd, zx, zy)"""
 
         # We feed the parameters to the decoder as [d, x, y] TODO: use in forward
-        self.reconst_dxy_decoder = DecoderSCVI(
-            n_input=n_latent_d + n_latent_x + n_latent_y,
-            n_output=n_input,  # output dim of decoder = original input dim
-            n_layers=decoder_n_layers,
-            n_hidden=decoder_n_hidden,
-            use_batch_norm=use_batch_norm_decoder,
-            use_layer_norm=use_layer_norm_decoder,
-            use_activation=not use_linear_decoder,
-            **_extra_decoder_kwargs
-        )
+        if use_linear_decoder:
+            self.reconst_dxy_decoder = LinearDecoderSCVI(
+                n_input=n_latent_d + n_latent_x + n_latent_y,
+                n_output=n_input,  # output dim of decoder = original input dim
+                use_batch_norm=use_batch_norm_decoder,
+                use_layer_norm=use_layer_norm_decoder,
+            )
+        else:
+            self.reconst_dxy_decoder = DecoderSCVI(
+                n_input=n_latent_d + n_latent_x + n_latent_y,
+                n_output=n_input,  # output dim of decoder = original input dim
+                n_layers=decoder_n_layers,
+                n_hidden=decoder_n_hidden,
+                use_batch_norm=use_batch_norm_decoder,
+                use_layer_norm=use_layer_norm_decoder,
+                **_extra_decoder_kwargs
+            )
 
         """model priors p(xz), p_theta(zd|d), p_theta(zy|y)"""
 
@@ -162,17 +174,18 @@ class DIVA(BaseModuleClass):
                 **_extra_encoder_kwargs
             )
 
-            self.prior_zy_y_encoder = Encoder(
-                n_input=n_labels,
-                n_output=n_latent_y,
-                n_layers=priors_n_layers,
-                n_hidden=priors_n_hidden,
-                dropout_rate=self.dropout_rate,
-                use_batch_norm=use_batch_norm_encoder,
-                use_layer_norm=use_layer_norm_encoder,
-                return_dist=True,
-                **_extra_encoder_kwargs
-            )
+            if not self._unsupervised:
+                self.prior_zy_y_encoder = Encoder(
+                    n_input=n_labels,
+                    n_output=n_latent_y,
+                    n_layers=priors_n_layers,
+                    n_hidden=priors_n_hidden,
+                    dropout_rate=self.dropout_rate,
+                    use_batch_norm=use_batch_norm_encoder,
+                    use_layer_norm=use_layer_norm_encoder,
+                    return_dist=True,
+                    **_extra_encoder_kwargs
+                )
 
         """library model q(l|x)"""
         # l encoder goes from n_input-dimensional data to 1-d library size
@@ -190,6 +203,7 @@ class DIVA(BaseModuleClass):
 
         """variational posteriors q_phi(zx|x), q_phi(zd|x), q_phi(zy|x)"""
         if self._use_x_latent:
+            self.beta_x = beta_x
             self.posterior_zx_x_encoder = Encoder(
                 n_input=n_input,
                 n_output=n_latent_x,
@@ -214,27 +228,31 @@ class DIVA(BaseModuleClass):
             **_extra_encoder_kwargs
         )
 
-        self.posterior_zy_x_encoder = Encoder(
-            n_input=n_input,
-            n_output=n_latent_y,
-            n_layers=posterior_n_layers,
-            n_hidden=posterior_n_hidden,
-            distribution=self.latent_distribution,
-            use_batch_norm=use_batch_norm_encoder,
-            use_layer_norm=use_layer_norm_encoder,
-            return_dist=True,
-            **_extra_encoder_kwargs
-        )
+        if not self._unsupervised:
+            self.beta_y = beta_y
+            self.alpha_y = alpha_y
+            self.posterior_zy_x_encoder = Encoder(
+                n_input=n_input,
+                n_output=n_latent_y,
+                n_layers=posterior_n_layers,
+                n_hidden=posterior_n_hidden,
+                distribution=self.latent_distribution,
+                use_batch_norm=use_batch_norm_encoder,
+                use_layer_norm=use_layer_norm_encoder,
+                return_dist=True,
+                **_extra_encoder_kwargs
+            )
 
-        """auxiliary tasks q_w(d|zd), q_w(y|zy)"""
+            """auxiliary task q_w(y|zy)"""
+            self.aux_y_enc = torch.nn.Sequential(
+                *[] if use_linear_label_classifier else [nn.ReLU()],
+                nn.Linear(n_latent_y, n_labels)
+            )
+
+        """auxiliary task q_w(d|zd)"""
         self.aux_d_zd_enc = torch.nn.Sequential(
-            None if use_linear_batch_classifier else nn.ReLU(),
+            *[] if use_linear_batch_classifier else [nn.ReLU()],
             nn.Linear(n_latent_d, n_batch)
-        )
-
-        self.aux_y_enc = torch.nn.Sequential(
-            None if use_linear_label_classifier else nn.ReLU(),
-            nn.Linear(n_latent_y, n_labels)
         )
 
     def _get_inference_input(self, tensors: dict[str, torch.Tensor], **kwargs):
@@ -296,7 +314,10 @@ class DIVA(BaseModuleClass):
 
         # tuples of posterior distribution and drawn latent variable
         q_zd_x, zd_x = self.posterior_zd_x_encoder(x_)
-        q_zy_x, zy_x = self.posterior_zy_x_encoder(x_)
+        if not self._unsupervised:
+            q_zy_x, zy_x = self.posterior_zy_x_encoder(x_)
+        else:
+            q_zy_x, zy_x = (None, None)
         if self._use_x_latent:
             q_zx_x, zx_x = self.posterior_zx_x_encoder(x_)
         else:
@@ -309,9 +330,10 @@ class DIVA(BaseModuleClass):
 
         if n_samples > 1:
             utran_zd = q_zd_x.rsample((n_samples,))
-            utran_zy = q_zy_x.rsample((n_samples,))
             zd_x = self.posterior_zd_x_encoder.z_transformation(utran_zd)
-            zy_x = self.posterior_zy_x_encoder.z_transformation(utran_zy)
+            if not self._unsupervised:
+                utran_zy = q_zy_x.rsample((n_samples,))
+                zy_x = self.posterior_zy_x_encoder.z_transformation(utran_zy)
             if self._use_x_latent:
                 utran_zx = q_zx_x.rsample((n_samples,))
                 zx_x = self.posterior_zx_x_encoder.z_transformation(utran_zx)
@@ -343,7 +365,10 @@ class DIVA(BaseModuleClass):
 
         px_scale, px_r, px_rate, px_dropout = self.reconst_dxy_decoder(
             self.dispersion,
-            torch.cat([zd_x, zx_x, zy_x] if self._use_x_latent else [zd_x, zy_x], dim=-1),
+            torch.cat([
+                zd_x,
+                *([] if not self._use_x_latent else [zx_x]),
+                *([] if self._unsupervised else [zy_x])], dim=-1),
             size_factor
         )
 
@@ -378,19 +403,22 @@ class DIVA(BaseModuleClass):
             )
 
         # priors
+        p_zy_y = None
         if self.use_learnable_priors:
             p_zd_d, _ = self.prior_zd_d_encoder(one_hot(batch_index, self.n_batch))
-            p_zy_y, _ = self.prior_zy_y_encoder(one_hot(y, self.n_labels))
+            if not self._unsupervised:
+                p_zy_y, _ = self.prior_zy_y_encoder(one_hot(y, self.n_labels))
 
         else:
             p_zd_d = Normal(torch.zeros_like(zd_x), torch.ones_like(zd_x))
-            p_zy_y = Normal(torch.zeros_like(zy_x), torch.ones_like(zy_x))
+            if not self._unsupervised:
+                p_zy_y = Normal(torch.zeros_like(zy_x), torch.ones_like(zy_x))
 
         p_zx = Normal(torch.zeros_like(zx_x), torch.ones_like(zx_x)) if self._use_x_latent else None
 
         # auxiliary losses
         d_hat = self.aux_d_zd_enc(zd_x)
-        y_hat = self.aux_y_enc(zy_x)
+        y_hat = self.aux_y_enc(zy_x) if not self._unsupervised else None
 
         outputs = {'px_recon': px_recon, 'd_hat': d_hat, 'y_hat': y_hat, 'p_zd_d': p_zd_d, 'p_zx': p_zx,
                    'p_zy_y': p_zy_y}
@@ -425,11 +453,6 @@ class DIVA(BaseModuleClass):
 
         reconst_loss = -generative_outputs["px_recon"].log_prob(x).sum(-1)
 
-        kl_zy = kl(
-            inference_outputs["q_zy_x"],
-            generative_outputs["p_zy_y"]
-        ).sum(dim=1)
-
         kl_zd = kl(
             inference_outputs["q_zd_x"],
             generative_outputs["p_zd_d"]
@@ -443,7 +466,12 @@ class DIVA(BaseModuleClass):
         else:
             kl_l = torch.tensor(0.0, device=x.device)
 
-        kl_local_for_warmup = self.beta_y * kl_zy + self.beta_d * kl_zd
+        # KL loss
+        kl_local_for_warmup = self.beta_d * kl_zd
+
+        # auxiliary losses
+        aux_d = F.cross_entropy(generative_outputs["d_hat"], d.view(-1, ))
+        aux_loss = self.alpha_d * aux_d
 
         if self._use_x_latent:
             kl_zx = kl(
@@ -452,22 +480,25 @@ class DIVA(BaseModuleClass):
             ).sum(dim=1)
             kl_local_for_warmup += self.beta_x * kl_zx
 
+        if not self._unsupervised:
+            kl_zy = kl(
+                inference_outputs["q_zy_x"],
+                generative_outputs["p_zy_y"]
+            ).sum(dim=1)
+            kl_local_for_warmup += self.beta_y * kl_zy
+
+            # weights for cross entropy
+            if self._ce_weights_y is None:
+                warnings.warn(
+                    "No weights initialized for cross entropy of DIVA model.\n"
+                    "Use `.init_ce_weights(adata)` to initialize them.")
+
+            aux_y = F.cross_entropy(generative_outputs["y_hat"], y.view(-1, ),
+                                    weight=torch.tensor(self._ce_weights_y, device=x.device, dtype=x.dtype))
+            aux_loss += self.alpha_y * aux_y
+
         kl_local_no_warmup = kl_l
         weighted_kl_local = kl_weight * kl_local_for_warmup + kl_local_no_warmup
-
-        # auxiliary losses
-        d_pred: torch.Tensor
-
-        # weights for cross entropy
-        if self._ce_weights_y is None:
-            warnings.warn(
-                "No weights initialized for cross entropy of DIVA model.\n"
-                "Use `.init_ce_weights(adata)` to initialize them.")
-
-        aux_d = F.cross_entropy(generative_outputs["d_hat"], d.view(-1, ), )
-        aux_y = F.cross_entropy(generative_outputs["y_hat"], y.view(-1, ),
-                                weight=torch.tensor(self._ce_weights_y, device=x.device, dtype=x.dtype))
-        aux_loss = self.alpha_d * aux_d + self.alpha_y * aux_y
 
         loss = torch.mean(reconst_loss + weighted_kl_local) + ce_weight * aux_loss
 
@@ -475,12 +506,12 @@ class DIVA(BaseModuleClass):
             "kl_divergence_l": kl_l,
             "kl_divergence_zd": kl_zd,
             "kl_divergence_zx": kl_zx if self._use_x_latent else 0,
-            "kl_divergence_zy": kl_zy
+            "kl_divergence_zy": kl_zy if not self._unsupervised else 0
         }
 
         return LossOutput(loss, reconst_loss, kl_local, extra_metrics={
             'aux_d': aux_d,
-            'aux_y': aux_y
+            'aux_y': aux_y if not self._unsupervised else 0
         })
 
     def sample(self, *args, **kwargs):
@@ -493,6 +524,9 @@ class DIVA(BaseModuleClass):
         :param tensors: Input tensors of batch as provided by dataloader
         :return: Tuple of (y_true, y_pred) where y_pred is the prediction and y_true the ground truth
         """
+        if self._unsupervised:
+            raise NotImplementedError("Unsupervised prediction not supported. Please train an external classifier")
+
         x = tensors[REGISTRY_KEYS.X_KEY]
 
         if self.log_variational:
@@ -511,40 +545,3 @@ class DIVA(BaseModuleClass):
         # print(np.array(range(self.n_batch)))
         cat_y = adata[indices].obs[label_key].cat.codes
         self._ce_weights_y = compute_class_weight('balanced', classes=np.array(range(self.n_labels)), y=cat_y)
-
-    def get_latent(
-        self,
-        tensors,
-        give_mean: bool = True,
-        mc_samples: int = 5000,
-    ):
-        inference_inputs = self._get_inference_input(tensors)
-        outputs = self.inference(**inference_inputs)
-        q_zd_x = outputs["q_zd_x"]
-        q_zx_x = outputs["q_zx_x"]
-        q_zy_x = outputs["q_zy_x"]
-
-        if give_mean:
-            if self.module.latent_distribution == "ln":
-                samples_zd_x = q_zd_x.sample([mc_samples])
-                samples_zx_x = q_zx_x.sample([mc_samples])
-                samples_zy_x = q_zy_x.sample([mc_samples])
-
-                zd_x = torch.nn.functional.softmax(samples_zd_x, dim=-1)
-                zx_x = torch.nn.functional.softmax(samples_zx_x, dim=-1)
-                zy_x = torch.nn.functional.softmax(samples_zy_x, dim=-1)
-
-                zd_x = zd_x.mean(dim=0)
-                zx_x = zx_x.mean(dim=0)
-                zy_x = zy_x.mean(dim=0)
-
-            else:
-                zd_x = q_zd_x.loc
-                zx_x = q_zx_x.loc
-                zy_x = q_zy_x.loc
-        else:
-            zd_x = outputs["zd_x"]
-            zx_x = outputs["zx_x"]
-            zy_x = outputs["zy_x"]
-
-        return [torch.cat([zd_x.cpu(), zx_x.cpu(), zy_x.cpu()], dim=1)]
