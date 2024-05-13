@@ -1520,7 +1520,8 @@ class scDIVA_plan(TrainingPlan):
 
     def validation_step(self, batch, batch_idx):
         super().validation_step(batch, batch_idx)
-        self._log_scores(batch, mode='validation')
+        if not self.module._unsupervised:
+            self._log_scores(batch, mode='validation')
 
 # class ReferenceQueryPlan(TrainingPlan):
 #
