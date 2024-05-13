@@ -9,8 +9,9 @@ import torch
 from anndata import AnnData
 from lightning import LightningDataModule
 from scvi import REGISTRY_KEYS, settings
-from scvi._types import Tunable
+from scvi._types import Tunable, AnnOrMuData
 from scvi.data import AnnDataManager
+from scvi.data._utils import _check_if_view
 from scvi.data.fields import LayerField, CategoricalObsField
 from scvi.dataloaders._data_splitting import DefaultDataSplitter
 from scvi.model._utils import _init_library_size, get_max_epochs_heuristic, use_distributed_sampler
@@ -34,7 +35,7 @@ class DiSCVI(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
     def __init__(
         self,
         adata: AnnData | None = None,
-        n_latent_d: int = 3,
+        n_latent_d: int = 4,
         n_latent_x: int = 4,
         n_latent_y: int = 10,
         dropout_rate: float = 0.1,
@@ -402,3 +403,25 @@ class DiSCVI(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
 
         self.module.init_ce_weight_y(self.adata, data_module.train_idx, self._label_key)
         return runner()
+
+    def _validate_anndata(
+        self, adata: AnnOrMuData | None = None, copy_if_view: bool = True
+    ) -> AnnData:
+        """Validate anndata has been properly registered, transfer if necessary."""
+        if adata is None:
+            adata = self.adata
+
+        _check_if_view(adata, copy_if_view=copy_if_view)
+
+        adata_manager = self.get_anndata_manager(adata)
+        if adata_manager is None:
+            logger.info(
+                "Input AnnData not setup with scvi-tools. "
+                + "attempting to transfer AnnData setup"
+            )
+            self._register_manager_for_instance(self.adata_manager.transfer_fields(adata, extend_categories=True))
+        else:
+            # Case where correct AnnDataManager is found, replay registration as necessary.
+            adata_manager.validate()
+
+        return adata
