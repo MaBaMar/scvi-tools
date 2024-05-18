@@ -19,6 +19,7 @@ from scvi.model.base import RNASeqMixin, VAEMixin, BaseModelClass, UnsupervisedT
 from scvi.module import DIVA
 from scvi.train._trainingplans import scDIVA_plan
 from scvi.utils import setup_anndata_dsp
+from torch.distributions import MixtureSameFamily, Independent
 
 logger = logging.getLogger(__name__)
 
@@ -405,7 +406,7 @@ class DiSCVI(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         return runner()
 
     def _validate_anndata(
-        self, adata: AnnOrMuData | None = None, copy_if_view: bool = True
+        self, adata: AnnOrMuD2ata | None = None, copy_if_view: bool = True
     ) -> AnnData:
         """Validate anndata has been properly registered, transfer if necessary."""
         if adata is None:
@@ -425,3 +426,20 @@ class DiSCVI(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
             adata_manager.validate()
 
         return adata
+
+    def y_prior_logprob(self, tensors: torch.Tensor, mode: Literal['max', 'mean'] = 'mean') -> torch.Tensor:
+        if mode == 'mean':
+            return self.module.full_y_prior_dist().log_prob(tensors.to(self.module.device)).cpu().numpy()
+        else:
+            with torch.no_grad():
+                encodings = torch.eye(self.module.n_labels, device=self.module.device)
+                dists = []
+                for idx in range(self.module.n_labels):
+                    p_zy_y: torch.distributions.Normal
+                    p_zy_y, _ = self.module.prior_zy_y_encoder(encodings[idx:idx + 1, :])
+                    ind = Independent(p_zy_y, 1)
+                    dists.append(ind.expand([tensors.shape[0]]))
+                probs = []
+                for p in dists:
+                    probs.append(p.log_prob(tensors.to(self.module.device)).detach().cpu().numpy())
+            return np.array(probs).max(axis=0)

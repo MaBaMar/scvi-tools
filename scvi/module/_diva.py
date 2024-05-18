@@ -17,8 +17,7 @@ from scvi.module.base import BaseModuleClass, LossOutput, auto_move_data
 from scvi.nn import DecoderSCVI, Encoder, one_hot, LinearDecoderSCVI
 from sklearn.utils.class_weight import compute_class_weight
 from torch import nn
-from torch.distributions import Normal
-from torch.distributions import kl_divergence as kl
+from torch.distributions import Normal, kl_divergence as kl, MixtureSameFamily, Independent, Categorical
 
 
 # TODO: support minification
@@ -545,3 +544,9 @@ class DIVA(BaseModuleClass):
         # print(np.array(range(self.n_batch)))
         cat_y = adata[indices].obs[label_key].cat.codes
         self._ce_weights_y = compute_class_weight('balanced', classes=np.array(range(self.n_labels)), y=cat_y)
+
+    @torch.inference_mode()
+    def full_y_prior_dist(self):
+        encodings = torch.eye(self.n_labels, device=self.device)
+        p_zy_y, _ = self.prior_zy_y_encoder(encodings)
+        return MixtureSameFamily(Categorical(torch.ones(self.n_labels, device=self.device)), Independent(p_zy_y, 1))
