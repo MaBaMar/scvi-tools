@@ -45,7 +45,7 @@ class DIVA(BaseModuleClass):
         beta_y: float = 1,
         alpha_d: float = 1000,
         alpha_y: float = 1500,
-        priors_n_hidden: int = 32,
+        priors_n_hidden: int = 8,
         priors_n_layers: int = 1,
         posterior_n_hidden: int = 128,
         posterior_n_layers: int = 1,
