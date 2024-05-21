@@ -518,9 +518,11 @@ class DIVA(BaseModuleClass):
         raise NotImplementedError
 
     @auto_move_data
-    def predict(self, tensors) -> Tuple[torch.Tensor, torch.Tensor]:
+    def predict(self, tensors, use_mean_as_sample=False) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         :param tensors: Input tensors of batch as provided by dataloader
+        :param use_mean_as_sample: If true, uses the mean of the posterior normal distribution as sample instead of
+        drawing from the posterior distribution
         :return: Tuple of (y_true, y_pred) where y_pred is the prediction and y_true the ground truth
         """
         if self._unsupervised:
@@ -533,7 +535,11 @@ class DIVA(BaseModuleClass):
         else:
             x_ = x
 
-        _, zy_x = self.posterior_zy_x_encoder(x_)
+        dist, zy_x = self.posterior_zy_x_encoder(x_)
+
+        if use_mean_as_sample:
+            zy_x = dist.mean()
+
         _, y_pred = self.aux_y_enc(zy_x).max(dim=1)
         y_true = tensors[REGISTRY_KEYS.LABELS_KEY]
         return y_true, y_pred

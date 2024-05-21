@@ -1500,7 +1500,7 @@ class scDIVA_plan(TrainingPlan):
 
     @torch.inference_mode()
     def _log_scores(self, batch, mode: Literal['train', 'validation']):
-        y_true, y_pred = self.module.predict(batch)
+        y_true, y_pred = self.module.predict(batch, use_mean_as_sample=True)
         y_true = y_true.ravel()
         self.balanced_accuracy(y_pred, y_true)
         self.accuracy(y_pred, y_true)
