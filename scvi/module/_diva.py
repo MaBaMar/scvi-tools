@@ -538,7 +538,7 @@ class DIVA(BaseModuleClass):
         dist, zy_x = self.posterior_zy_x_encoder(x_)
 
         if use_mean_as_sample:
-            zy_x = dist.mean()
+            zy_x = dist.mean
 
         _, y_pred = self.aux_y_enc(zy_x).max(dim=1)
         y_true = tensors[REGISTRY_KEYS.LABELS_KEY]
