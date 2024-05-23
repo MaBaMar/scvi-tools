@@ -9,7 +9,7 @@ import torch
 from anndata import AnnData
 from lightning import LightningDataModule
 from scvi import REGISTRY_KEYS, settings
-from scvi._types import Tunable, AnnOrMuData
+from scvi._types import Tunable
 from scvi.data import AnnDataManager
 from scvi.data._utils import _check_if_view
 from scvi.data.fields import LayerField, CategoricalObsField
@@ -19,7 +19,7 @@ from scvi.model.base import RNASeqMixin, VAEMixin, BaseModelClass, UnsupervisedT
 from scvi.module import DIVA
 from scvi.train._trainingplans import scDIVA_plan
 from scvi.utils import setup_anndata_dsp
-from torch.distributions import MixtureSameFamily, Independent
+from torch.distributions import Independent
 
 logger = logging.getLogger(__name__)
 
@@ -434,6 +434,7 @@ class DiSCVI(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         else:
             return self.draw_from_all_priors(tensors).max(axis=0)
 
+    @torch.inference_mode()
     def draw_from_all_priors(self, tensors: torch.Tensor) -> np.ndarray:
         with torch.no_grad():
             encodings = torch.eye(self.module.n_labels, device=self.module.device)
@@ -448,4 +449,31 @@ class DiSCVI(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
                 probs.append(p.log_prob(tensors.to(self.module.device)).detach().cpu().numpy())
             return np.array(probs)
 
+    def predict_with_priors(self,
+                            adata: Optional[AnnData] = None,
+                            indices: Optional[Sequence[int]] = None,
+                            batch_size: Optional[int] = None,
+                            ):
+        """
+        :returns: (y_true, y_pred) but using prior probabilities as predictor instead of internal classifier
+        """
+        y_pred = []
+        y_true = []
+        self._check_if_trained(warn=False)
+        adata = self._validate_anndata(adata)
+        scdl = self._make_data_loader(adata=adata, indices=indices, batch_size=batch_size)
 
+        for tensors in scdl:
+            x = tensors[REGISTRY_KEYS.X_KEY]
+
+            if self.module.log_variational:
+                x_ = torch.log(1 + x)
+            else:
+                x_ = x
+
+            dist, zy_x = self.module.posterior_zy_x_encoder(x_)
+
+            y_true.append(tensors[REGISTRY_KEYS.LABELS_KEY])
+            y_pred.append(self.draw_from_all_priors(zy_x).argmax(axis=0))
+
+        return torch.cat(y_true, dim=0), torch.cat(y_pred, dim=0)
