@@ -28,7 +28,8 @@ class DIVA(BaseModuleClass):
     as probability distribution) """
 
     _ce_weights_y = None
-    _ce_weights_d = None
+    _kl_weights_y = None
+    _kl_weights_d = None
     _use_x_latent = True
     _unsupervised: bool = False
 
@@ -466,7 +467,12 @@ class DIVA(BaseModuleClass):
             kl_l = torch.tensor(0.0, device=x.device)
 
         # KL loss
-        kl_local_for_warmup = self.beta_d * kl_zd
+        if self._kl_weights_d is None:
+            warnings.warn(
+                "No weights initialized for balanced KL of DIVA model.\n"
+                "Use `.init_kl_weights` to initialize them.")
+
+        kl_local_for_warmup = self.beta_d * kl_zd * torch.tensor(self._kl_weights_d, device=self.device)[d]
 
         # auxiliary losses
         aux_d = F.cross_entropy(generative_outputs["d_hat"], d.view(-1, ))
@@ -484,13 +490,14 @@ class DIVA(BaseModuleClass):
                 inference_outputs["q_zy_x"],
                 generative_outputs["p_zy_y"]
             ).sum(dim=1)
-            kl_local_for_warmup += self.beta_y * kl_zy
+
+            kl_local_for_warmup += self.beta_y * kl_zy * torch.tensor(self._kl_weights_y, device=self.device)[y]
 
             # weights for cross entropy
             if self._ce_weights_y is None:
                 warnings.warn(
                     "No weights initialized for cross entropy of DIVA model.\n"
-                    "Use `.init_ce_weights(adata)` to initialize them.")
+                    "Use `.init_ce_weights_y` to initialize them.")
 
             aux_y = F.cross_entropy(generative_outputs["y_hat"], y.view(-1, ),
                                     weight=torch.tensor(self._ce_weights_y, device=x.device, dtype=x.dtype))
@@ -546,10 +553,34 @@ class DIVA(BaseModuleClass):
 
     def init_ce_weight_y(self, adata: AnnData, indices, label_key: str):
         # BEWARE!!! Validation loss will use training weighting for CE!
+        """Does not work if train split does not contain all celltypes"""
         # print(cat_d.min(),cat_d.max())
         # print(np.array(range(self.n_batch)))
-        cat_y = adata[indices].obs[label_key].cat.codes
+        cat_y = adata.obs[label_key].cat.codes[indices]
         self._ce_weights_y = compute_class_weight('balanced', classes=np.array(range(self.n_labels)), y=cat_y)
+
+    def init_kl_weights(self, adata: AnnData, indices, label_key: str, batch_key: str):
+        cat_y = adata.obs[label_key].cat.codes[indices]
+        cat_d = adata.obs[batch_key].cat.codes[indices]
+
+        cat_d_holdout = np.setdiff1d(np.unique(adata.obs[batch_key].cat.codes),
+                                     np.unique(adata.obs[batch_key].cat.codes[indices]))
+        cat_y_holdout = np.setdiff1d(np.unique(adata.obs[label_key].cat.codes),
+                                     np.unique(adata.obs[label_key].cat.codes[indices]))
+
+        """Note: We might have batches only present in validation set. This needs to be taken into consideration here.
+        They'll get very high training weights, but since we do not use those batches during training, that does
+        not matter. However, the high values might corrupt validation loss. Therefore, we set such batches to 1"""
+
+        """use # samples / (1 + # classes * # bincount) to allow calculation for empty batches (here 1+ in divisor)"""
+        cat_d_corrected = np.append(cat_d, range(self.n_batch))
+        cat_y_corrected = np.append(cat_y, range(self.n_labels))
+
+        self._kl_weights_y = compute_class_weight('balanced', classes=np.array(range(self.n_labels)), y=cat_y_corrected)
+        self._kl_weights_d = compute_class_weight('balanced', classes=np.array(range(self.n_batch)), y=cat_d_corrected)
+
+        self._kl_weights_y[cat_y_holdout] = 1
+        self._kl_weights_d[cat_d_holdout] = 1
 
     @torch.inference_mode()
     def full_y_prior_dist(self):

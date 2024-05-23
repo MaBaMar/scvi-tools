@@ -403,6 +403,7 @@ class DiSCVI(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         data_module.setup()
 
         self.module.init_ce_weight_y(self.adata, data_module.train_idx, self._label_key)
+        self.module.init_kl_weights(self.adata, data_module.train_idx, self._label_key, self._batch_key)
         return runner()
 
     def _validate_anndata(
