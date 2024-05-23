@@ -457,23 +457,27 @@ class DiSCVI(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         """
         :returns: (y_true, y_pred) but using prior probabilities as predictor instead of internal classifier
         """
-        y_pred = []
-        y_true = []
-        self._check_if_trained(warn=False)
-        adata = self._validate_anndata(adata)
-        scdl = self._make_data_loader(adata=adata, indices=indices, batch_size=batch_size)
+        # y_pred = []
+        # y_true = []
+        # self._check_if_trained(warn=False)
+        # adata = self._validate_anndata(adata)
+        # scdl = self._make_data_loader(adata=adata, indices=indices, batch_size=batch_size)
+        #
+        # for tensors in scdl:
+        #     x = tensors[REGISTRY_KEYS.X_KEY]
+        #
+        #     if self.module.log_variational:
+        #         x_ = torch.log(1 + x)
+        #     else:
+        #         x_ = x
+        #
+        #     dist, zy_x = self.module.posterior_zy_x_encoder(x_.to(self.module.device))
+        #
+        #     y_true.append(tensors[REGISTRY_KEYS.LABELS_KEY])
+        #     y_pred.append(torch.tensor(self.draw_from_all_priors(zy_x.cpu()).argmax(axis=0)))
+        py_x = self.latent_separated(adata=adata, indices=indices, batch_size=batch_size)
+        draws = self.draw_from_all_priors(torch.tensor(py_x))
+        y_pred = draws.argmax(axis=0)
+        y_true, _ = self.predict(adata=adata, indices=indices, batch_size=batch_size)
 
-        for tensors in scdl:
-            x = tensors[REGISTRY_KEYS.X_KEY]
-
-            if self.module.log_variational:
-                x_ = torch.log(1 + x)
-            else:
-                x_ = x
-
-            dist, zy_x = self.module.posterior_zy_x_encoder(x_.to(self.module.device))
-
-            y_true.append(tensors[REGISTRY_KEYS.LABELS_KEY])
-            y_pred.append(torch.tensor(self.draw_from_all_priors(zy_x.cpu()).argmax(axis=0)))
-
-        return torch.cat(y_true, dim=0), torch.cat(y_pred, dim=0)
+        return y_true, y_pred
