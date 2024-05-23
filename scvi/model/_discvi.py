@@ -475,7 +475,7 @@ class DiSCVI(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         #
         #     y_true.append(tensors[REGISTRY_KEYS.LABELS_KEY])
         #     y_pred.append(torch.tensor(self.draw_from_all_priors(zy_x.cpu()).argmax(axis=0)))
-        py_x = self.latent_separated(adata=adata, indices=indices, batch_size=batch_size)
+        py_x = self.latent_separated(adata=adata, indices=indices, batch_size=batch_size)[2]
         draws = self.draw_from_all_priors(torch.tensor(py_x))
         y_pred = draws.argmax(axis=0)
         y_true, _ = self.predict(adata=adata, indices=indices, batch_size=batch_size)
