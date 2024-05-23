@@ -474,6 +474,6 @@ class DiSCVI(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
             dist, zy_x = self.module.posterior_zy_x_encoder(x_.to(self.module.device))
 
             y_true.append(tensors[REGISTRY_KEYS.LABELS_KEY])
-            y_pred.append(self.draw_from_all_priors(zy_x.cpu()).argmax(axis=0))
+            y_pred.append(torch.tensor(self.draw_from_all_priors(zy_x.cpu()).argmax(axis=0)))
 
         return torch.cat(y_true, dim=0), torch.cat(y_pred, dim=0)
