@@ -432,15 +432,20 @@ class DiSCVI(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         if mode == 'mean':
             return self.module.full_y_prior_dist().log_prob(tensors.to(self.module.device)).cpu().numpy()
         else:
-            with torch.no_grad():
-                encodings = torch.eye(self.module.n_labels, device=self.module.device)
-                dists = []
-                for idx in range(self.module.n_labels):
-                    p_zy_y: torch.distributions.Normal
-                    p_zy_y, _ = self.module.prior_zy_y_encoder(encodings[idx:idx + 1, :])
-                    ind = Independent(p_zy_y, 1)
-                    dists.append(ind.expand([tensors.shape[0]]))
-                probs = []
-                for p in dists:
-                    probs.append(p.log_prob(tensors.to(self.module.device)).detach().cpu().numpy())
-            return np.array(probs).max(axis=0)
+            return self.draw_from_all_priors(tensors).max(axis=0)
+
+    def draw_from_all_priors(self, tensors: torch.Tensor) -> np.ndarray:
+        with torch.no_grad():
+            encodings = torch.eye(self.module.n_labels, device=self.module.device)
+            dists = []
+            for idx in range(self.module.n_labels):
+                p_zy_y: torch.distributions.Normal
+                p_zy_y, _ = self.module.prior_zy_y_encoder(encodings[idx:idx + 1, :])
+                ind = Independent(p_zy_y, 1)
+                dists.append(ind.expand([tensors.shape[0]]))
+            probs = []
+            for p in dists:
+                probs.append(p.log_prob(tensors.to(self.module.device)).detach().cpu().numpy())
+            return np.array(probs)
+
+
