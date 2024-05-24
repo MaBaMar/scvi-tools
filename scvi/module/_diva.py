@@ -70,6 +70,120 @@ class DIVA(BaseModuleClass):
         extra_encoder_kwargs: Optional[dict] = None,
         extra_decoder_kwargs: Optional[dict] = None
     ):
+
+        """
+        Module for DIVA based models. Supports various sub-variants and customizations. Inspired by the original DIVA
+        implementation, adapted and evolved for the single cell RNA-seq case
+
+        Parameters
+        ----------
+        n_input
+            Number of input features, i.e. different genes per sample
+        n_batch
+            Number of batches in the dataset upon which `setup_adata` was called
+        n_labels
+            Number of different cell-types/labels in the dataset upon which `setup_adata` was called
+        n_latent_d
+            Dimension for batch latent space
+        n_latent_x
+            Dimension of auxiliary latent space. If 0, the latent space is deactivated. It is recommended to use this
+            latent space if the data has a lot of variance not explained by batch or cell-type.
+        n_latent_y
+            Dimension of cell-type latent space. If 0, the latent space is deactivated. The latent space can be
+            deactivated to use the model for batch-integration tasks, effectively making the model unsupervised in terms
+            of cell-type labels.
+        beta_d
+            KL weight :math:`\beta_{d}` used to weight the KL divergence term of the batch latent space. If learnable
+            priors are used, this parameter drives separation of batch clusters and helps avoid capturing non-batch
+            related information in the batch latent space. Also serves as a regularizer.
+        beta_x
+            KL weight :math:`\beta_{x}` used to weight the KL divergence term of the auxiliary latent space. Higher
+            values help avoid cell-type or batch information leakage, but decrease the ability of the model to capture
+            additional unexplained variance.
+        beta_y
+            KL weight :math:`\beta_{y}` used to weight the KL divergence term of the cell-type latent space. If
+            learnable priors are used, this parameter drives separation of cell-type clusters and helps avoid capturing
+            non-cell-type related information in the cell-type latent space. Also serves as a regularizer.
+        alpha_d
+            Classification weight :math:`\alpha_{d}` used to weight CE loss of batch classifier (if used). To deactivate
+             the classifier, set this value to 0 or set `min_classifier_weight`=0 and `max_classifier_weight`=0 in
+            `plan_kwargs` of the training plan. The latter deactivates both cell-type and batch classifiers.
+        alpha_y
+            Classification weight :math:`\alpha_{y}` used to weight CE loss of cell-type classifier (if used). To
+            deactivate the classifier, set this value to 0 or set `min_classifier_weight`=0 and
+            `max_classifier_weight`=0 in `plan_kwargs` of the training plan. The latter deactivates both cell-type and
+            batch classifiers.
+        priors_n_hidden
+            Number of hidden units in the prior encoders used for the learnable priors. If `use_learnable_priors` is
+            `False`, this value will be ignored.
+        priors_n_layers
+            Number of hidden layers in the prior encoders used for the learnable priors. If `use_learnable_priors` is
+            `False`, this value will be ignored.
+        posterior_n_hidden
+            Number of hidden units in the posterior encoders. All posteriors use the same amount of hidden units to
+            reduce hyperparameter count.
+        posterior_n_layers
+            Number of hidden layers in the posterior encoders. All posteriors use the same amount of hidden layers to
+            reduce hyperparameter count.
+        decoder_n_hidden
+            Number of hidden units in the SCVI decoder.
+        decoder_n_layers
+            Number of hidden layers in the SCVI decoder.
+        dropout_rate
+            Dropout rate used for the learnable priors. If `use_learnable_priors` is `False`, this value will be
+            ignored.
+        dispersion
+            One of the following:
+
+            * ``'gene'`` - dispersion parameter of NB is constant per gene across cells
+            * ``'gene-batch'`` - dispersion can differ between different batches
+            * ``'gene-label'`` - dispersion can differ between different labels
+            * ``'gene-cell'`` - dispersion can differ for every gene in every cell
+            Model has only been tested with `gene` so far. Option exists for API compatibility. Use at your own risk.
+        log_variational
+            Log(data+1) prior to encoding for numerical stability. Not normalization.
+        gene_likelihood
+            One of:
+
+            * ``'nb'`` - Negative binomial distribution
+            * ``'zinb'`` - Zero-inflated negative binomial distribution
+            * ``'poisson'`` - Poisson distribution
+        latent_distribution
+            One of
+
+            * ``'normal'`` - Isotropic normal
+            * ``'ln'`` - Logistic normal with normal params N(0, 1)
+        use_batch_norm
+            Whether to use batch norm in layers.
+        use_layer_norm
+            Whether to use layer norm in layers.
+        use_linear_decoder
+            Whether to use a linear decoder instead of the default non-linear one.
+        use_linear_batch_classifier
+            Whether to make the batch classifier linear. This parameter is ignored if the batch classifier is
+            deactivated.
+        use_linear_label_classifier
+            Whether to make the batch cell-type linear. This parameter is ignored if the batch classifier is
+            deactivated.
+        use_size_factor_key
+            Use size_factor AnnDataField defined by the user as scaling factor in mean of conditional distribution.
+            Takes priority over `use_observed_lib_size`.
+        use_observed_lib_size
+            Use observed library size for RNA as scaling factor in mean of conditional distribution
+        use_learnable_priors
+            If `False`, the priors used for batch and cell-type latent space correspond to normal distributions and
+            are no longer learnable.
+        library_log_means
+            1 x n_batch array of means of the log library sizes. Parameterizes prior on library size if
+            not using observed library size.
+        library_log_vars
+            1 x n_batch array of variances of the log library sizes. Parameterizes prior on library size if
+            not using observed library size.
+        extra_encoder_kwargs
+            Additional keyword arguments to pass to `Encoder` classes.
+        extra_decoder_kwargs
+            Additional keyword arguments to pass to `DecoderSCVI` or `LinearDecoderSCVI` classes.
+        """
         super().__init__()
 
         if n_latent_x <= 0:
@@ -584,6 +698,13 @@ class DIVA(BaseModuleClass):
 
     @torch.inference_mode()
     def full_y_prior_dist(self):
+        """
+        Combines the learned priors distribution to a joint gaussian mixture model.
+        Returns
+        -------
+        MixtureSameFamily
+            The gaussian mixture model combining the learned priors of the cell-type latent space.
+        """
         encodings = torch.eye(self.n_labels, device=self.device)
         p_zy_y, _ = self.prior_zy_y_encoder(encodings)
         return MixtureSameFamily(Categorical(torch.ones(self.n_labels, device=self.device)), Independent(p_zy_y, 1))
