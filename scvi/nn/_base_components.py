@@ -286,6 +286,72 @@ class Encoder(nn.Module):
         return q_m, q_v, latent
 
 
+class MeanOnlyEncoder(nn.Module):
+    def __init__(
+        self,
+        n_input: int,
+        n_output: int,
+        n_cat_list: Iterable[int] = None,
+        n_layers: int = 1,
+        n_hidden: int = 128,
+        dropout_rate: float = 0.1,
+        distribution: str = "normal",
+        var: float = 1,
+        return_dist: bool = False,
+        **kwargs,
+    ):
+        super().__init__()
+
+        self.distribution = distribution
+        self.var = 1
+        self.encoder = FCLayers(
+            n_in=n_input,
+            n_out=n_hidden,
+            n_cat_list=n_cat_list,
+            n_layers=n_layers,
+            n_hidden=n_hidden,
+            dropout_rate=dropout_rate,
+            **kwargs,
+        )
+        self.mean_encoder = nn.Linear(n_hidden, n_output)
+        self.return_dist = return_dist
+
+        if distribution == "ln":
+            self.z_transformation = nn.Softmax(dim=-1)
+        else:
+            self.z_transformation = _identity
+
+    def forward(self, x: torch.Tensor, *cat_list: int):
+        r"""The forward computation for a single sample.
+
+         #. Encodes the data into latent space using the encoder network
+         #. Generates a mean \\( q_m \\) and variance \\( q_v \\)
+         #. Samples a new value from an i.i.d. multivariate normal \\( \\sim Ne(q_m, \\mathbf{I}q_v) \\)
+
+        Parameters
+        ----------
+        x
+            tensor with shape (n_input,)
+        cat_list
+            list of category membership(s) for this sample
+
+        Returns
+        -------
+        3-tuple of :py:class:`torch.Tensor`
+            tensors of shape ``(n_latent,)`` for mean and var, and sample
+
+        """
+        # Parameters for latent distribution
+        q = self.encoder(x, *cat_list)
+        q_m = self.mean_encoder(q)
+        q_v = torch.ones_like(q_m)*self.var
+        dist = Normal(q_m, q_v.sqrt())
+        latent = self.z_transformation(dist.rsample())
+        if self.return_dist:
+            return dist, latent
+        return q_m, q_v, latent
+
+
 # Decoder
 class DecoderSCVI(nn.Module):
     """Decodes data from latent space of ``n_input`` dimensions into ``n_output`` dimensions.

@@ -14,7 +14,7 @@ from scvi import REGISTRY_KEYS
 from scvi._types import Tunable
 from scvi.distributions import ZeroInflatedNegativeBinomial, NegativeBinomial, Poisson
 from scvi.module.base import BaseModuleClass, LossOutput, auto_move_data
-from scvi.nn import DecoderSCVI, Encoder, one_hot, LinearDecoderSCVI
+from scvi.nn import DecoderSCVI, Encoder, one_hot, LinearDecoderSCVI, MeanOnlyEncoder
 from sklearn.utils.class_weight import compute_class_weight
 from torch import nn
 from torch.distributions import Normal, kl_divergence as kl, MixtureSameFamily, Independent, Categorical
@@ -48,6 +48,8 @@ class DIVA(BaseModuleClass):
         alpha_y: float = 1500,
         priors_n_hidden: int = 8,
         priors_n_layers: int = 1,
+        prior_variance_d: float = None,
+        prior_variance_y: float = None,
         posterior_n_hidden: int = 128,
         posterior_n_layers: int = 1,
         decoder_n_hidden: int = 128,
@@ -119,6 +121,12 @@ class DIVA(BaseModuleClass):
         priors_n_layers
             Number of hidden layers in the prior encoders used for the learnable priors. If `use_learnable_priors` is
             `False`, this value will be ignored.
+        prior_variance_d
+            If this is not `None`, the model will use the given constant variance for all batch priors along all
+            dimensions instead of learning it. If `use_learnable_priors` is `False`, this value will be ignored.
+        prior_variance_y
+            If this is not `None`, the model will use the given constant variance for all cell-type priors along all
+            dimensions instead of learning it. If `use_learnable_priors` is `False`, this value will be ignored.
         posterior_n_hidden
             Number of hidden units in the posterior encoders. All posteriors use the same amount of hidden units to
             reduce hyperparameter count.
@@ -276,22 +284,10 @@ class DIVA(BaseModuleClass):
 
         # calling forward on those encoders directly returns a distribution dist and sample latent
         if use_learnable_priors:
-            self.prior_zd_d_encoder = Encoder(
-                n_input=n_batch,
-                n_output=n_latent_d,
-                n_layers=priors_n_layers,
-                n_hidden=priors_n_hidden,
-                dropout_rate=self.dropout_rate,
-                use_batch_norm=use_batch_norm_encoder,
-                use_layer_norm=use_layer_norm_encoder,
-                return_dist=True,
-                **_extra_encoder_kwargs
-            )
-
-            if not self._unsupervised:
-                self.prior_zy_y_encoder = Encoder(
-                    n_input=n_labels,
-                    n_output=n_latent_y,
+            if prior_variance_d is None:
+                self.prior_zd_d_encoder = Encoder(
+                    n_input=n_batch,
+                    n_output=n_latent_d,
                     n_layers=priors_n_layers,
                     n_hidden=priors_n_hidden,
                     dropout_rate=self.dropout_rate,
@@ -300,6 +296,46 @@ class DIVA(BaseModuleClass):
                     return_dist=True,
                     **_extra_encoder_kwargs
                 )
+            else:
+                self.prior_zd_d_encoder = MeanOnlyEncoder(
+                    n_input=n_batch,
+                    n_output=n_latent_d,
+                    n_layers=priors_n_layers,
+                    n_hidden=priors_n_hidden,
+                    dropout_rate=self.dropout_rate,
+                    use_batch_norm=use_batch_norm_encoder,
+                    use_layer_norm=use_layer_norm_encoder,
+                    return_dist=True,
+                    var=prior_variance_d,
+                    **_extra_encoder_kwargs
+                )
+
+            if not self._unsupervised:
+                if prior_variance_y is None:
+                    self.prior_zy_y_encoder = Encoder(
+                        n_input=n_labels,
+                        n_output=n_latent_y,
+                        n_layers=priors_n_layers,
+                        n_hidden=priors_n_hidden,
+                        dropout_rate=self.dropout_rate,
+                        use_batch_norm=use_batch_norm_encoder,
+                        use_layer_norm=use_layer_norm_encoder,
+                        return_dist=True,
+                        **_extra_encoder_kwargs
+                    )
+                else:
+                    self.prior_zy_y_encoder = MeanOnlyEncoder(
+                        n_input=n_labels,
+                        n_output=n_latent_y,
+                        n_layers=priors_n_layers,
+                        n_hidden=priors_n_hidden,
+                        dropout_rate=self.dropout_rate,
+                        use_batch_norm=use_batch_norm_encoder,
+                        use_layer_norm=use_layer_norm_encoder,
+                        return_dist=True,
+                        var=prior_variance_y,
+                        **_extra_encoder_kwargs
+                    )
 
         """library model q(l|x)"""
         # l encoder goes from n_input-dimensional data to 1-d library size
