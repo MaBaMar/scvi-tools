@@ -1464,17 +1464,34 @@ class scDIVA_plan(TrainingPlan):
         self.f1_internal = F1Score(task='multiclass', num_classes=self.module.n_labels, average='macro')
         self.f1_prior = F1Score(task='multiclass', num_classes=self.module.n_labels, average='macro')
 
+        self.accuracy_internal_train = Accuracy(task='multiclass', num_classes=self.module.n_labels)
+        self.accuracy_prior_train = Accuracy(task='multiclass', num_classes=self.module.n_labels)
+
+        self.balanced_accuracy_internal_train = Accuracy(task='multiclass', num_classes=self.module.n_labels,
+                                                         average='macro')
+        self.balanced_accuracy_prior_train = Accuracy(task='multiclass', num_classes=self.module.n_labels,
+                                                      average='macro')
+
+        self.f1_internal_train = F1Score(task='multiclass', num_classes=self.module.n_labels, average='macro')
+        self.f1_prior_train = F1Score(task='multiclass', num_classes=self.module.n_labels, average='macro')
+
         self.accuracy = {
-            'internal': self.accuracy_internal,
-            'prior': self.accuracy_prior
+            'validation': {'internal': self.accuracy_internal,
+                           'prior': self.accuracy_prior},
+            'train': {'internal': self.accuracy_internal_train,
+                      'prior': self.accuracy_prior_train}
         }
         self.balanced_accuracy = {
-            'internal': self.balanced_accuracy_internal,
-            'prior': self.balanced_accuracy_prior
+            'validation': {'internal': self.balanced_accuracy_internal,
+                           'prior': self.balanced_accuracy_prior},
+            'train': {'internal': self.balanced_accuracy_internal_train,
+                      'prior': self.balanced_accuracy_prior_train}
         }
         self.f1 = {
-            'internal': self.f1_internal,
-            'prior': self.f1_prior
+            'validation': {'internal': self.f1_internal,
+                           'prior': self.f1_prior},
+            'train': {'internal': self.f1_internal_train,
+                      'prior': self.f1_prior_train}
         }
 
         self.max_classifier_weight = max_classifier_weight
@@ -1530,18 +1547,18 @@ class scDIVA_plan(TrainingPlan):
             y_true, y_pred = pred_func(batch, use_mean_as_sample=True)  # makes for more stable logging
             y_true = y_true.ravel()
 
-            self.balanced_accuracy[classifier](y_pred, y_true)
-            self.accuracy[classifier](y_pred, y_true)
-            self.f1[classifier](y_pred, y_true)
+            self.balanced_accuracy[mode][classifier](y_pred, y_true)
+            self.accuracy[mode][classifier](y_pred, y_true)
+            self.f1[mode][classifier](y_pred, y_true)
 
             self.log_dict({
-                f'balanced accuracy {classifier} {mode}': self.balanced_accuracy[classifier],
-                f'accuracy {classifier} {mode}': self.accuracy[classifier],
-                f'f1 {classifier} {mode}': self.f1[classifier],
+                f'balanced accuracy {classifier} {mode}': self.balanced_accuracy[mode][classifier],
+                f'accuracy {classifier} {mode}': self.accuracy[mode][classifier],
+                f'f1 {classifier} {mode}': self.f1[mode][classifier],
             },
                 False,
-                on_step=False,
-                on_epoch=True,
+                on_step=mode == 'train',
+                on_epoch=mode != 'train',
                 batch_size=len(y_true),
                 sync_dist=self.use_sync_dist,
             )
