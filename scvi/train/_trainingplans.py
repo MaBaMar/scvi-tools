@@ -1557,8 +1557,8 @@ class scDIVA_plan(TrainingPlan):
                 f'f1 {classifier} {mode}': self.f1[mode][classifier],
             },
                 False,
-                on_step=mode == 'train',
-                on_epoch=mode != 'train',
+                on_step=False,
+                on_epoch=True,
                 batch_size=len(y_true),
                 sync_dist=self.use_sync_dist,
             )
