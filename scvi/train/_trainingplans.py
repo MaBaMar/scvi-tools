@@ -1539,7 +1539,7 @@ class scDIVA_plan(TrainingPlan):
             self.module.train()
         return scDIVA_loss.loss
 
-    # @torch.inference_mode()
+    @torch.inference_mode()
     def _log_scores(self, batch, mode: Literal['train', 'validation']):
         # for metric in [*self.accuracy.values(), *self.balanced_accuracy.values(), *self.f1.values()]:
         #     metric.to(self.module.device)
