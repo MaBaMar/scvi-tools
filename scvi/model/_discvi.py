@@ -254,6 +254,7 @@ class DiSCVI(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         self, adata: Optional[AnnData] = None,
         indices: Optional[Sequence[int]] = None,
         batch_size: Optional[int] = None,
+        use_priors=False
     ):
         """
         :returns: (y_true, y_pred)
@@ -265,7 +266,10 @@ class DiSCVI(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         scdl = self._make_data_loader(adata=adata, indices=indices, batch_size=batch_size)
 
         for tensors in scdl:
-            model_pred = self.module.predict(tensors)
+            if not use_priors:
+                model_pred = self.module.predict(tensors)
+            else:
+                model_pred = self.module.prior_predict(tensors)
             y_true.append(model_pred[0].cpu())
             y_pred.append(model_pred[1].cpu())
 
@@ -456,28 +460,6 @@ class DiSCVI(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
                             ):
         """
         :returns: (y_true, y_pred) but using prior probabilities as predictor instead of internal classifier
+        TODO: remove - no longer needed, has been integrated in predict method
         """
-        # y_pred = []
-        # y_true = []
-        # self._check_if_trained(warn=False)
-        # adata = self._validate_anndata(adata)
-        # scdl = self._make_data_loader(adata=adata, indices=indices, batch_size=batch_size)
-        #
-        # for tensors in scdl:
-        #     x = tensors[REGISTRY_KEYS.X_KEY]
-        #
-        #     if self.module.log_variational:
-        #         x_ = torch.log(1 + x)
-        #     else:
-        #         x_ = x
-        #
-        #     dist, zy_x = self.module.posterior_zy_x_encoder(x_.to(self.module.device))
-        #
-        #     y_true.append(tensors[REGISTRY_KEYS.LABELS_KEY])
-        #     y_pred.append(torch.tensor(self.draw_from_all_priors(zy_x.cpu()).argmax(axis=0)))
-        py_x = self.latent_separated(adata=adata, indices=indices, batch_size=batch_size)[2]
-        draws = self.draw_from_all_priors(torch.tensor(py_x))
-        y_pred = draws.argmax(axis=0)
-        y_true, _ = self.predict(adata=adata, indices=indices, batch_size=batch_size)
-
-        return y_true, y_pred
+        return self.predict(adata=adata, indices=indices, batch_size=batch_size, use_priors=True)

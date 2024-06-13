@@ -38,15 +38,15 @@ class DIVA(BaseModuleClass):
         n_input: int,
         n_batch: int,
         n_labels: int,
-        n_latent_d: int = 4,
-        n_latent_x: int = 4,
+        n_latent_d: int = 4,  # 2, 5, 10
+        n_latent_x: int = 4,  # 0, 5, 10
         n_latent_y: int = 10,
-        beta_d: float = 1,
+        beta_d: float = 1,  # 1, 10, 50
         beta_x: float = 13,
         beta_y: float = 1,
         alpha_d: float = 1000,
         alpha_y: float = 1500,
-        priors_n_hidden: int = 8,
+        priors_n_hidden: int = 32,
         priors_n_layers: int = 1,
         prior_variance_d: float = None,
         prior_variance_y: float = None,
@@ -674,6 +674,7 @@ class DIVA(BaseModuleClass):
         # not really needed for our experiments
         raise NotImplementedError
 
+    @torch.inference_mode()
     @auto_move_data
     def predict(self, tensors, use_mean_as_sample=False) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -700,6 +701,43 @@ class DIVA(BaseModuleClass):
         _, y_pred = self.aux_y_enc(zy_x).max(dim=1)
         y_true = tensors[REGISTRY_KEYS.LABELS_KEY]
         return y_true, y_pred
+
+    @torch.inference_mode()
+    @auto_move_data
+    def prior_predict(self, tensors, use_mean_as_sample=False) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        :param tensors: Input tensors of batch as provided by dataloader
+        :param use_mean_as_sample: If true, uses the mean of the posterior normal distribution as sample instead of
+        drawing from the posterior distribution
+        :return: Tuple of (y_true, y_pred) where y_pred is the prediction and y_true the ground truth
+        """
+
+        if self._unsupervised:
+            raise NotImplementedError("Unsupervised prediction not supported. Please train an external classifier")
+
+        x = tensors[REGISTRY_KEYS.X_KEY]
+        # print("X shape: ", x.shape)
+
+        if self.log_variational:
+            x_ = torch.log(1 + x)
+        else:
+            x_ = x
+
+        dist, zy_x = self.posterior_zy_x_encoder(x_)
+
+        if use_mean_as_sample:
+            zy_x = dist.mean
+
+        # draw from priors
+        encodings = torch.eye(self.n_labels, device=self.device)
+        probs = torch.zeros((self.n_labels, x.shape[0]), device=self.device)
+        for idx in range(self.n_labels):
+            p_zy_y: torch.distributions.Normal
+            # print(encodings, file=sys.stderr)
+            p_zy_y, _ = self.prior_zy_y_encoder(encodings[idx:idx + 1, :])
+            ind = Independent(p_zy_y, 1)
+            probs[idx, :] = ind.expand([zy_x.shape[0]]).log_prob(zy_x)
+        return tensors[REGISTRY_KEYS.LABELS_KEY], probs.argmax(dim=0)
 
     def init_ce_weight_y(self, adata: AnnData, indices, label_key: str):
         # BEWARE!!! Validation loss will use training weighting for CE!

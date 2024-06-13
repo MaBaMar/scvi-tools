@@ -1,3 +1,4 @@
+import warnings
 from collections import OrderedDict
 from collections.abc import Iterable
 from functools import partial
@@ -106,7 +107,8 @@ def _compute_classifier_weight(epoch: int,
     if 1 < ce_scale_threshold or 0 > ce_scale_threshold:
         raise ValueError('classifier_scale_threshold must lie within the interval [0.0, 1.0]')
     if min_ce_weight > max_ce_weight:
-        raise ValueError('min value cannot exceed maximum')
+        warnings.warn('min values is smaller than max value. This leads to a decresing schedule. If this is not '
+                      'intended, please adapt `min_ce_weight` and `max_ce_weight` s.t. min_ce_weight <= max_ce_weight')
 
     threshold_cap = n_epochs_warmup * ce_scale_threshold
 
@@ -1453,9 +1455,27 @@ class scDIVA_plan(TrainingPlan):
                          min_kl_weight=min_kl_weight,
                          **loss_kwargs)
 
-        self.accuracy = Accuracy(task='multiclass', num_classes=self.module.n_labels)
-        self.balanced_accuracy = Accuracy(task='multiclass', num_classes=self.module.n_labels, average='macro')
-        self.f1 = F1Score(task='multiclass', num_classes=self.module.n_labels, average='macro')
+        self.accuracy_internal = Accuracy(task='multiclass', num_classes=self.module.n_labels)
+        self.accuracy_prior = Accuracy(task='multiclass', num_classes=self.module.n_labels)
+
+        self.balanced_accuracy_internal = Accuracy(task='multiclass', num_classes=self.module.n_labels, average='macro')
+        self.balanced_accuracy_prior = Accuracy(task='multiclass', num_classes=self.module.n_labels, average='macro')
+
+        self.f1_internal = F1Score(task='multiclass', num_classes=self.module.n_labels, average='macro')
+        self.f1_prior = F1Score(task='multiclass', num_classes=self.module.n_labels, average='macro')
+
+        self.accuracy = {
+            'internal': self.accuracy_internal,
+            'prior': self.accuracy_prior
+        }
+        self.balanced_accuracy = {
+            'internal': self.balanced_accuracy_internal,
+            'prior': self.balanced_accuracy_prior
+        }
+        self.f1 = {
+            'internal': self.f1_internal,
+            'prior': self.f1_prior
+        }
 
         self.max_classifier_weight = max_classifier_weight
         self.min_classifier_weight = min_classifier_weight
@@ -1470,7 +1490,7 @@ class scDIVA_plan(TrainingPlan):
     def ce_weight(self):
         return _compute_classifier_weight(
             epoch=self.current_epoch,
-            n_epochs_warmup=self.max_epochs,
+            n_epochs_warmup=self.n_epochs_kl_warmup,
             max_ce_weight=self.max_classifier_weight,
             min_ce_weight=self.min_classifier_weight,
             ce_scale_threshold=self.classifier_scale_threshold,
@@ -1487,36 +1507,44 @@ class scDIVA_plan(TrainingPlan):
             ce_weight = self.ce_weight
             self.loss_kwargs.update({"ce_weight": ce_weight})
             self.log("ce_weight", ce_weight, on_step=True, on_epoch=False)
-        _, _, scvi_loss = self.forward(batch, loss_kwargs=self.loss_kwargs)
+        _, _, scDIVA_loss = self.forward(batch, loss_kwargs=self.loss_kwargs)
         self.log(
             "train_loss",
-            scvi_loss.loss,
+            scDIVA_loss.loss,
             on_epoch=True,
             prog_bar=True,
             sync_dist=self.use_sync_dist,
         )
-        self.compute_and_log_metrics(scvi_loss, self.train_metrics, "train")
-        return scvi_loss.loss
+        self.compute_and_log_metrics(scDIVA_loss, self.train_metrics, "train")
+        if not self.module._unsupervised:
+            self.module.eval()
+            self._log_scores(batch, mode='train')
+            self.module.train()
+        return scDIVA_loss.loss
 
-    @torch.inference_mode()
+    # @torch.inference_mode()
     def _log_scores(self, batch, mode: Literal['train', 'validation']):
-        y_true, y_pred = self.module.predict(batch, use_mean_as_sample=True)
-        y_true = y_true.ravel()
-        self.balanced_accuracy(y_pred, y_true)
-        self.accuracy(y_pred, y_true)
-        self.f1(y_pred, y_true)
+        # for metric in [*self.accuracy.values(), *self.balanced_accuracy.values(), *self.f1.values()]:
+        #     metric.to(self.module.device)
+        for classifier, pred_func in zip(['internal', 'prior'], [self.module.predict, self.module.prior_predict]):
+            y_true, y_pred = pred_func(batch, use_mean_as_sample=True)  # makes for more stable logging
+            y_true = y_true.ravel()
 
-        self.log_dict({
-            f'balanced accuracy {mode}': self.balanced_accuracy,
-            f'accuracy {mode}': self.accuracy,
-            f'f1 {mode}': self.f1,
-        },
-            False,
-            on_step=False,
-            on_epoch=True,
-            batch_size=len(y_true),
-            sync_dist=self.use_sync_dist,
-        )
+            self.balanced_accuracy[classifier](y_pred, y_true)
+            self.accuracy[classifier](y_pred, y_true)
+            self.f1[classifier](y_pred, y_true)
+
+            self.log_dict({
+                f'balanced accuracy {classifier} {mode}': self.balanced_accuracy[classifier],
+                f'accuracy {classifier} {mode}': self.accuracy[classifier],
+                f'f1 {classifier} {mode}': self.f1[classifier],
+            },
+                False,
+                on_step=False,
+                on_epoch=True,
+                batch_size=len(y_true),
+                sync_dist=self.use_sync_dist,
+            )
 
     def validation_step(self, batch, batch_idx):
         super().validation_step(batch, batch_idx)
