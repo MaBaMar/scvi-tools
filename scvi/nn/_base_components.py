@@ -303,7 +303,7 @@ class MeanOnlyEncoder(nn.Module):
         super().__init__()
 
         self.distribution = distribution
-        self.var = 1
+        self.var = var
         self.encoder = FCLayers(
             n_in=n_input,
             n_out=n_hidden,

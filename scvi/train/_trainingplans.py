@@ -1435,6 +1435,7 @@ class scDIVA_plan(TrainingPlan):
         n_epochs_warmup: Tunable[int],
         classifier_scale_threshold: Tunable[float] = 0.9,
         classifier_curvature: Tunable[float] = 1,
+        log_extra_train_metrics: bool = True,   # if False, training is significantly faster
         **loss_kwargs,
     ):
         super().__init__(module=module,
@@ -1499,6 +1500,7 @@ class scDIVA_plan(TrainingPlan):
         self.max_epochs = n_epochs_warmup
         self.classifier_scale_threshold = classifier_scale_threshold
         self.classifier_curvature = classifier_curvature
+        self.log_extra_train_metrics = log_extra_train_metrics
 
         if "ce_weight" in self._loss_args:
             self.loss_kwargs.update({"ce_weight": self.ce_weight})
@@ -1533,7 +1535,7 @@ class scDIVA_plan(TrainingPlan):
             sync_dist=self.use_sync_dist,
         )
         self.compute_and_log_metrics(scDIVA_loss, self.train_metrics, "train")
-        if not self.module._unsupervised:
+        if not self.module._unsupervised and self.log_extra_train_metrics:
             self.module.eval()
             self._log_scores(batch, mode='train')
             self.module.train()
