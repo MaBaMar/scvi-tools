@@ -1432,7 +1432,7 @@ class scDIVA_plan(TrainingPlan):
         min_kl_weight: Tunable[float] = 0.0,
         max_classifier_weight: Tunable[float] = 1.0,
         min_classifier_weight: Tunable[float] = 1.0,
-        n_epochs_warmup: Tunable[int],
+        n_epochs_ce_warmup: Tunable[int],
         classifier_scale_threshold: Tunable[float] = 0.9,
         classifier_curvature: Tunable[float] = 1,
         log_extra_train_metrics: bool = True,   # if False, training is significantly faster
@@ -1497,7 +1497,7 @@ class scDIVA_plan(TrainingPlan):
 
         self.max_classifier_weight = max_classifier_weight
         self.min_classifier_weight = min_classifier_weight
-        self.max_epochs = n_epochs_warmup
+        self.n_epochs_ce_warmup = n_epochs_ce_warmup
         self.classifier_scale_threshold = classifier_scale_threshold
         self.classifier_curvature = classifier_curvature
         self.log_extra_train_metrics = log_extra_train_metrics
@@ -1509,7 +1509,7 @@ class scDIVA_plan(TrainingPlan):
     def ce_weight(self):
         return _compute_classifier_weight(
             epoch=self.current_epoch,
-            n_epochs_warmup=self.n_epochs_kl_warmup,
+            n_epochs_warmup=self.n_epochs_ce_warmup,
             max_ce_weight=self.max_classifier_weight,
             min_ce_weight=self.min_classifier_weight,
             ce_scale_threshold=self.classifier_scale_threshold,

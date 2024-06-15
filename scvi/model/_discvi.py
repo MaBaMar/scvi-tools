@@ -387,7 +387,7 @@ class DiSCVI(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
             plan_kwargs['n_epochs_kl_warmup'] = min(400, max_epochs)
 
         if 'n_epochs_warmup' not in plan_kwargs:
-            plan_kwargs['n_epochs_warmup'] = max_epochs
+            plan_kwargs['n_epochs_ce_warmup'] = max_epochs
 
         training_plan = self._training_plan_cls(self.module, **plan_kwargs)
 
