@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import sys
 import warnings
-from typing import Literal, Optional, Tuple
+from typing import Literal, Optional
 
 import numpy as np
 import torch
@@ -55,6 +55,8 @@ class DIVA(BaseModuleClass):
         decoder_n_hidden: int = 128,
         decoder_n_layers: int = 1,
         dropout_rate: float = 0.1,
+        lib_encoder_n_hidden: int = 128,
+        lib_encoder_n_layers: int = 1,
         dispersion: Literal["gene", "gene-batch", "gene-label", "gene-cell"] = "gene",
         log_variational: Tunable[bool] = True,
         gene_likelihood: Literal["zinb", "nb", "poisson"] = "zinb",
@@ -234,6 +236,11 @@ class DIVA(BaseModuleClass):
         self.alpha_d = alpha_d
         # variables for x and y are initialized only if the latent spaces are used (see later if conditions)
 
+        # if latent spaces are used, but the classifiers deactivated, the classifiers are removed from inference to
+        # speed up the model
+        self._use_batch_classifier = alpha_d != 0
+        self._use_celltype_classifier = alpha_y != 0 and not self._unsupervised
+
         self.use_learnable_priors = use_learnable_priors
 
         if self.dispersion == "gene":
@@ -268,6 +275,7 @@ class DIVA(BaseModuleClass):
                 n_output=n_input,  # output dim of decoder = original input dim
                 use_batch_norm=use_batch_norm_decoder,
                 use_layer_norm=use_layer_norm_decoder,
+                **_extra_decoder_kwargs
             )
         else:
             self.reconst_dxy_decoder = DecoderSCVI(
@@ -310,6 +318,7 @@ class DIVA(BaseModuleClass):
                     **_extra_encoder_kwargs
                 )
 
+            # deactivate the y latent space for unsupervised mode
             if not self._unsupervised:
                 if prior_variance_y is None:
                     self.prior_zy_y_encoder = Encoder(
@@ -342,8 +351,8 @@ class DIVA(BaseModuleClass):
         self.l_encoder = Encoder(
             n_input,
             1,
-            n_layers=1,  # TODO: add params or kwargs param for such stuff to __init__
-            n_hidden=128,  # TODO: add params or kwargs param for such stuff to __init__
+            n_layers=lib_encoder_n_layers,
+            n_hidden=lib_encoder_n_hidden,
             dropout_rate=dropout_rate,
             use_batch_norm=use_batch_norm_encoder,
             use_layer_norm=use_layer_norm_encoder,
@@ -378,6 +387,7 @@ class DIVA(BaseModuleClass):
             **_extra_encoder_kwargs
         )
 
+        # unsupervised mode has no need for the y latent posterior and classifier
         if not self._unsupervised:
             self.beta_y = beta_y
             self.alpha_y = alpha_y
@@ -393,17 +403,20 @@ class DIVA(BaseModuleClass):
                 **_extra_encoder_kwargs
             )
 
-            """auxiliary task q_w(y|zy)"""
-            self.aux_y_enc = torch.nn.Sequential(
-                *[] if use_linear_label_classifier else [nn.ReLU()],
-                nn.Linear(n_latent_y, n_labels)
-            )
+            """auxiliary task q_w(y|zy), i.e. y-latent classifier -> only used if the latent classifier is actually
+            activated (this is never the case in unsupervised mode)"""
+            if self._use_celltype_classifier:
+                self.aux_y_zy_enc = torch.nn.Sequential(
+                    *[] if use_linear_label_classifier else [nn.ReLU()],
+                    nn.Linear(n_latent_y, n_labels)
+                )
 
         """auxiliary task q_w(d|zd)"""
-        self.aux_d_zd_enc = torch.nn.Sequential(
-            *[] if use_linear_batch_classifier else [nn.ReLU()],
-            nn.Linear(n_latent_d, n_batch)
-        )
+        if self._use_batch_classifier:
+            self.aux_d_zd_enc = torch.nn.Sequential(
+                *[] if use_linear_batch_classifier else [nn.ReLU()],
+                nn.Linear(n_latent_d, n_batch)
+            )
 
     def _get_inference_input(self, tensors: dict[str, torch.Tensor], **kwargs):
         batch_index = tensors[REGISTRY_KEYS.BATCH_KEY]
@@ -455,7 +468,7 @@ class DIVA(BaseModuleClass):
         """
 
         x_ = x
-        # library
+        # library size
         library = None
         if self.use_observed_lib_size:
             library = torch.log(x.sum(1)).unsqueeze(1)
@@ -567,8 +580,8 @@ class DIVA(BaseModuleClass):
         p_zx = Normal(torch.zeros_like(zx_x), torch.ones_like(zx_x)) if self._use_x_latent else None
 
         # auxiliary losses
-        d_hat = self.aux_d_zd_enc(zd_x)
-        y_hat = self.aux_y_enc(zy_x) if not self._unsupervised else None
+        d_hat = self.aux_d_zd_enc(zd_x) if self._use_batch_classifier else None
+        y_hat = self.aux_y_zy_enc(zy_x) if self._use_celltype_classifier else None
 
         outputs = {'px_recon': px_recon, 'd_hat': d_hat, 'y_hat': y_hat, 'p_zd_d': p_zd_d, 'p_zx': p_zx,
                    'p_zy_y': p_zy_y}
@@ -624,10 +637,6 @@ class DIVA(BaseModuleClass):
 
         kl_local_for_warmup = self.beta_d * kl_zd * torch.tensor(self._kl_weights_d, device=self.device)[d]
 
-        # auxiliary losses
-        aux_d = F.cross_entropy(generative_outputs["d_hat"], d.view(-1, ))
-        aux_loss = self.alpha_d * aux_d
-
         if self._use_x_latent:
             kl_zx = kl(
                 inference_outputs["q_zx_x"],
@@ -649,9 +658,21 @@ class DIVA(BaseModuleClass):
                     "No weights initialized for cross entropy of DIVA model.\n"
                     "Use `.init_ce_weights_y` to initialize them.")
 
+        aux_loss = 0
+
+        extra_metrics = {}
+
+        if self._use_batch_classifier:
+            # auxiliary losses
+            aux_d = F.cross_entropy(generative_outputs["d_hat"], d.view(-1, ))
+            aux_loss += self.alpha_d * aux_d
+            extra_metrics["aux_d"] = aux_d
+
+        if self._use_celltype_classifier:
             aux_y = F.cross_entropy(generative_outputs["y_hat"], y.view(-1, ),
                                     weight=torch.tensor(self._ce_weights_y, device=x.device, dtype=x.dtype))
             aux_loss += self.alpha_y * aux_y
+            extra_metrics["aux_y"] = aux_y
 
         kl_local_no_warmup = kl_l
         weighted_kl_local = kl_weight * kl_local_for_warmup + kl_local_no_warmup
@@ -665,10 +686,7 @@ class DIVA(BaseModuleClass):
             "kl_divergence_zy": kl_zy if not self._unsupervised else 0
         }
 
-        return LossOutput(loss, reconst_loss, kl_local, extra_metrics={
-            'aux_d': aux_d,
-            'aux_y': aux_y if not self._unsupervised else 0
-        })
+        return LossOutput(loss, reconst_loss, kl_local, extra_metrics=extra_metrics)
 
     def sample(self, *args, **kwargs):
         # not really needed for our experiments
@@ -676,68 +694,64 @@ class DIVA(BaseModuleClass):
 
     @torch.inference_mode()
     @auto_move_data
-    def predict(self, tensors, use_mean_as_sample=False) -> Tuple[torch.Tensor, torch.Tensor]:
+    def predict(self, tensors, mode: Literal['prior_based', 'internal_classifier'], use_mean_as_sample=False):
         """
-        :param tensors: Input tensors of batch as provided by dataloader
-        :param use_mean_as_sample: If true, uses the mean of the posterior normal distribution as sample instead of
-        drawing from the posterior distribution
-        :return: Tuple of (y_true, y_pred) where y_pred is the prediction and y_true the ground truth
+        Uses the model's internal prediction mechanisms to make predictions on query data. Do not use this method if you
+        want to use downstream classifiers instead.
+
+        Parameters
+        ----------
+        tensors
+            The query data
+        mode
+            One of 'prior_based' or 'internal_classifier'. 'prior_based' uses the learned priors for predictions
+            (if available) while 'internal_classifier' uses the internally trained cell-type classifier
+        use_mean_as_sample
+            If true, uses the mean of the posterior normal distribution as sample instead of drawing from the posterior
+            distribution. This reduces variance in predictions and is generally preferable in benchmarking settings
+
+        Returns
+        -------
+        torch.Tensor
+            The predicted cell type labels for the given data
         """
+
+        if not mode in (md_tmp := ['prior_based', 'internal_classifier']):
+            raise ValueError(f"mode must be in {md_tmp}")
+
         if self._unsupervised:
-            raise NotImplementedError("Unsupervised prediction not supported. Please train an external classifier")
+            raise NotImplementedError("Unsupervised prediction not supported. Please use an external classifier")
 
         x = tensors[REGISTRY_KEYS.X_KEY]
-
         if self.log_variational:
             x_ = torch.log(1 + x)
         else:
             x_ = x
 
         dist, zy_x = self.posterior_zy_x_encoder(x_)
-
         if use_mean_as_sample:
             zy_x = dist.mean
 
-        _, y_pred = self.aux_y_enc(zy_x).max(dim=1)
-        y_true = tensors[REGISTRY_KEYS.LABELS_KEY]
-        return y_true, y_pred
+        if mode == 'internal_classifier':
+            if not self._use_celltype_classifier:
+                warnings.warn('internal_classifier mode requires `alpha_y > 0`. Using prior_based mode instead.',
+                              category=RuntimeWarning)
+                mode = 'prior_based'
+            else:
+                _, y_pred = self.aux_y_zy_enc(zy_x).max(dim=1)
+                return y_pred
 
-    @torch.inference_mode()
-    @auto_move_data
-    def prior_predict(self, tensors, use_mean_as_sample=False) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        :param tensors: Input tensors of batch as provided by dataloader
-        :param use_mean_as_sample: If true, uses the mean of the posterior normal distribution as sample instead of
-        drawing from the posterior distribution
-        :return: Tuple of (y_true, y_pred) where y_pred is the prediction and y_true the ground truth
-        """
+        if mode == 'prior_based':
+            encodings = torch.eye(self.n_labels, device=self.device)
+            probs = torch.zeros((self.n_labels, x.shape[0]), device=self.device)
+            for idx in range(self.n_labels):
+                p_zy_y: torch.distributions.Normal
+                p_zy_y, _ = self.prior_zy_y_encoder(encodings[idx:idx + 1, :])
+                ind = Independent(p_zy_y, 1)
+                probs[idx, :] = ind.expand([zy_x.shape[0]]).log_prob(zy_x)
+            return probs.argmax(dim=0)
 
-        if self._unsupervised:
-            raise NotImplementedError("Unsupervised prediction not supported. Please train an external classifier")
-
-        x = tensors[REGISTRY_KEYS.X_KEY]
-        # print("X shape: ", x.shape)
-
-        if self.log_variational:
-            x_ = torch.log(1 + x)
-        else:
-            x_ = x
-
-        dist, zy_x = self.posterior_zy_x_encoder(x_)
-
-        if use_mean_as_sample:
-            zy_x = dist.mean
-
-        # draw from priors
-        encodings = torch.eye(self.n_labels, device=self.device)
-        probs = torch.zeros((self.n_labels, x.shape[0]), device=self.device)
-        for idx in range(self.n_labels):
-            p_zy_y: torch.distributions.Normal
-            # print(encodings, file=sys.stderr)
-            p_zy_y, _ = self.prior_zy_y_encoder(encodings[idx:idx + 1, :])
-            ind = Independent(p_zy_y, 1)
-            probs[idx, :] = ind.expand([zy_x.shape[0]]).log_prob(zy_x)
-        return tensors[REGISTRY_KEYS.LABELS_KEY], probs.argmax(dim=0)
+        raise ValueError("unsupported mode")
 
     def init_ce_weight_y(self, adata: AnnData, indices, label_key: str):
         # BEWARE!!! Validation loss will use training weighting for CE!
