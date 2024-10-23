@@ -274,7 +274,7 @@ class TunedDIVA(BaseModuleClass):
         d_hat = self.aux_d_zd_enc(zd_x)
         y_hat = self.aux_y_zy_enc(zy_x)
 
-        y[has_no_label] = torch.argmax(y_hat[has_no_label], dim=1).view(-1, 1)
+        y[has_no_label] = torch.argmax(y_hat.detach().copy()[has_no_label], dim=1).view(-1, 1)
 
         p_zd_d, _ = self.prior_zd_d_encoder(one_hot(d, self.n_batch))
         p_zy_y_unsup, _ = self.prior_zy_y_encoder(one_hot(y[has_no_label], self.n_labels))
