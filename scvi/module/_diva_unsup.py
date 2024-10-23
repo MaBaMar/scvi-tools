@@ -1,7 +1,6 @@
 """Semi-Supervised scDIVA implementation"""
 from __future__ import annotations
 
-import warnings
 from typing import Literal
 
 import numpy as np
@@ -52,7 +51,7 @@ class TunedDIVA(BaseModuleClass):
         if n_latent_y <= 0:
             raise ValueError("'n_latent_y' must be positive'")
 
-        self._unsupervised = True # this is required for the scDIVA training plan!
+        self._unsupervised = True  # this is required for the scDIVA training plan!
 
         self.n_input = n_input
         self.n_batch = n_batch
@@ -274,7 +273,7 @@ class TunedDIVA(BaseModuleClass):
         d_hat = self.aux_d_zd_enc(zd_x)
         y_hat = self.aux_y_zy_enc(zy_x)
 
-        y[has_no_label] = torch.argmax(y_hat.detach().copy()[has_no_label], dim=1).view(-1, 1)
+        y[has_no_label] = torch.argmax(y_hat.detach().clone()[has_no_label], dim=1).view(-1, 1)
 
         p_zd_d, _ = self.prior_zd_d_encoder(one_hot(d, self.n_batch))
         p_zy_y_unsup, _ = self.prior_zy_y_encoder(one_hot(y[has_no_label], self.n_labels))
@@ -318,11 +317,10 @@ class TunedDIVA(BaseModuleClass):
             generative_outputs['p_zy_y_sup'],
         ).sum(dim=1).view(-1, 1)
 
-        kl_zy[has_no_label] = - (
-            generative_outputs['p_zy_y_unsup'].log_prob(inference_outputs['zy_x'][has_no_label]).sum(-1)
-            - inference_outputs['q_zy_x_unsup'].log_prob(inference_outputs['zy_x'][has_no_label]).sum(-1)).view(-1,
-                                                                                                                1)
-        # TODO: add weighting here!
+        kl_zy[has_no_label] = (inference_outputs['q_zy_x_unsup'].log_prob(inference_outputs['zy_x'][has_no_label])
+                               - generative_outputs['p_zy_y_unsup'].log_prob(inference_outputs['zy_x'][has_no_label])
+                               ).sum(-1).view(-1, 1)
+
         weighted_kl_local = kl_weight * (
             self.beta_d * kl_zd * self._kl_weights_d.to(self.device)[d] + self.beta_y * kl_zy *
             self._kl_weights_y.to(self.device)[y])
