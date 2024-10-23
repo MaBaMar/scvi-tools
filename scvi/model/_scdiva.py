@@ -468,7 +468,8 @@ class SCDIVA(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
 
 class TunedSCDIVA(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
     _module_cls = TunedDIVA
-    _training_plan_cls = SemiSupervisedTrainingPlan
+    # _training_plan_cls = SemiSupervisedTrainingPlan
+    _training_plan_cls = scDIVA_plan
 
     def __init__(self,
                  adata: AnnData | None = None,
@@ -519,6 +520,9 @@ class TunedSCDIVA(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
             f"dropout_rate: {dropout_rate}, dispersion: {dispersion}, "
             f"gene_likelihood: {gene_likelihood}, latent_distribution: {latent_distribution}, "
         )
+
+        if use_default_data_splitter:
+            self._data_splitter_cls = DefaultDataSplitter
 
     def _set_indices_and_labels(self):
         """Set indices for labeled und unlabeled cells"""

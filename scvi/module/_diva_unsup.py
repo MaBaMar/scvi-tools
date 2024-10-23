@@ -52,6 +52,8 @@ class TunedDIVA(BaseModuleClass):
         if n_latent_y <= 0:
             raise ValueError("'n_latent_y' must be positive'")
 
+        self._unsupervised = True # this is required for the scDIVA training plan!
+
         self.n_input = n_input
         self.n_batch = n_batch
         self.n_labels = n_labels
