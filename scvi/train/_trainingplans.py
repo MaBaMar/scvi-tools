@@ -1545,18 +1545,18 @@ class scDIVA_plan(TrainingPlan):
     def _log_scores(self, batch, mode: Literal['train', 'validation']):
         # for metric in [*self.accuracy.values(), *self.balanced_accuracy.values(), *self.f1.values()]:
         #     metric.to(self.module.device)
-        for classifier, pred_func in zip(['internal', 'prior'], [self.module.predict, self.module.prior_predict]):
-            y_true, y_pred = pred_func(batch, use_mean_as_sample=True)  # makes for more stable logging
+        for c_mode in ['prior_based', 'internal_classifier']:
+            y_true, y_pred = self.module.predict(batch, c_mode, use_mean_as_sample=True)  # makes for more stable logging
             y_true = y_true.ravel()
 
-            self.balanced_accuracy[mode][classifier](y_pred, y_true)
-            self.accuracy[mode][classifier](y_pred, y_true)
-            self.f1[mode][classifier](y_pred, y_true)
+            self.balanced_accuracy[mode][c_mode](y_pred, y_true)
+            self.accuracy[mode][c_mode](y_pred, y_true)
+            self.f1[mode][c_mode](y_pred, y_true)
 
             self.log_dict({
-                f'balanced accuracy {classifier} {mode}': self.balanced_accuracy[mode][classifier],
-                f'accuracy {classifier} {mode}': self.accuracy[mode][classifier],
-                f'f1 {classifier} {mode}': self.f1[mode][classifier],
+                f'balanced accuracy {c_mode} {mode}': self.balanced_accuracy[mode][c_mode],
+                f'accuracy {c_mode} {mode}': self.accuracy[mode][c_mode],
+                f'f1 {c_mode} {mode}': self.f1[mode][c_mode],
             },
                 False,
                 on_step=False,
