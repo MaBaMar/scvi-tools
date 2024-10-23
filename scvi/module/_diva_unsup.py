@@ -1,6 +1,7 @@
 """Semi-Supervised scDIVA implementation"""
 from __future__ import annotations
 
+import warnings
 from typing import Literal
 
 import numpy as np
@@ -13,7 +14,7 @@ from scvi.module.base import BaseModuleClass, LossOutput, auto_move_data
 from scvi.nn import DecoderSCVI, Encoder, one_hot
 from sklearn.utils import compute_class_weight
 from torch import nn
-from torch.distributions import kl_divergence as kl
+from torch.distributions import kl_divergence as kl, Independent
 from torch.nn import functional as F
 
 
@@ -387,3 +388,61 @@ class TunedDIVA(BaseModuleClass):
 
         self._kl_weights_y[cat_y_holdout] = 1
         self._kl_weights_d[cat_d_holdout] = 1
+
+
+    @torch.inference_mode()
+    def predict(self, tensors, mode: Literal['prior_based', 'internal_classifier'], use_mean_as_sample=False):
+        """
+        Uses the model's internal prediction mechanisms to make predictions on query data. Do not use this method if you
+        want to use downstream classifiers instead.
+
+        Parameters
+        ----------
+        tensors
+            The query data
+        mode
+            One of 'prior_based' or 'internal_classifier'. 'prior_based' uses the learned priors for predictions
+            (if available) while 'internal_classifier' uses the internally trained cell-type classifier
+        use_mean_as_sample
+            If true, uses the mean of the posterior normal distribution as sample instead of drawing from the posterior
+            distribution. This reduces variance in predictions and is generally preferable in benchmarking settings
+
+        Returns
+        -------
+        torch.Tensor
+            The predicted cell type labels for the given data
+        """
+
+        if not mode in (md_tmp := ['prior_based', 'internal_classifier']):
+            raise ValueError(f"mode must be in {md_tmp}")
+
+        x = tensors[REGISTRY_KEYS.X_KEY]
+        if self.log_variational:
+            x_ = torch.log(1 + x)
+        else:
+            x_ = x
+
+        dist, zy_x = self.posterior_zy_x_encoder(x_)
+        if use_mean_as_sample:
+            zy_x = dist.mean
+
+        if mode == 'internal_classifier':
+            if not self._use_celltype_classifier:
+                warnings.warn('internal_classifier mode requires `alpha_y > 0`. Using prior_based mode instead.',
+                              category=RuntimeWarning)
+                mode = 'prior_based'
+            else:
+                _, y_pred = self.aux_y_zy_enc(zy_x).max(dim=1)
+                return y_pred
+
+        if mode == 'prior_based':
+            encodings = torch.eye(self.n_labels, device=self.device)
+            probs = torch.zeros((self.n_labels, x.shape[0]), device=self.device)
+            for idx in range(self.n_labels):
+                p_zy_y: torch.distributions.Normal
+                p_zy_y, _ = self.prior_zy_y_encoder(encodings[idx:idx + 1, :])
+                ind = Independent(p_zy_y, 1)
+                probs[idx, :] = ind.expand([zy_x.shape[0]]).log_prob(zy_x)
+            return probs.argmax(dim=0)
+
+        raise ValueError("unsupported mode")
