@@ -13,8 +13,8 @@ from scvi.module.base import BaseModuleClass, LossOutput, auto_move_data
 from scvi.nn import DecoderSCVI, Encoder, one_hot
 from sklearn.utils import compute_class_weight
 from torch import nn
-from torch.nn import functional as F
 from torch.distributions import kl_divergence as kl
+from torch.nn import functional as F
 
 
 class TunedDIVA(BaseModuleClass):
@@ -54,6 +54,9 @@ class TunedDIVA(BaseModuleClass):
         self.n_input = n_input
         self.n_batch = n_batch
         self.n_labels = n_labels
+
+        self.n_latent_d = n_latent_d
+        self.n_latent_y = n_latent_y
 
         self.dropout_rate = dropout_rate
         self.dispersion = dispersion
@@ -168,47 +171,12 @@ class TunedDIVA(BaseModuleClass):
         )
 
     def _get_inference_input(self, tensors: dict[str, torch.Tensor], **kwargs):
-        d = tensors[REGISTRY_KEYS.BATCH_KEY]
-        y = tensors[REGISTRY_KEYS.LABELS_KEY]
-        x = tensors[REGISTRY_KEYS.X_KEY]
-        return {'x': x, 'd': d, 'y': y}
+        return {'x': tensors[REGISTRY_KEYS.X_KEY], 'd': tensors[REGISTRY_KEYS.BATCH_KEY],
+                'y': tensors[REGISTRY_KEYS.LABELS_KEY]}
 
     def _get_generative_input(self, tensors: dict[str, torch.Tensor], inference_outputs: dict[str, torch.Tensor],
                               **kwargs):
-
-        d = tensors[REGISTRY_KEYS.BATCH_KEY]
-        y = tensors[REGISTRY_KEYS.LABELS_KEY]
-
-        has_no_label, has_label = self._get_label_masks(y)
-
-        # supervised generative
-        zd_x_sup = inference_outputs['sup']['zd_x']
-        zy_x_sup = inference_outputs['sup']['zy_x']
-        library_sup = inference_outputs['sup']['library']
-
-        # unsupervised generative
-        zd_x_unsup = inference_outputs['unsup']['zd_x']
-        zy_x_unsup = inference_outputs['unsup']['zy_x']
-        library_unsup = inference_outputs['unsup']['library']
-
-        size_factor_key = REGISTRY_KEYS.SIZE_FACTOR_KEY
-        size_factor_sup = (
-            torch.log(tensors[size_factor_key][has_label.reshape(-1)]) if size_factor_key in tensors.keys() else None
-        )
-        size_factor_unsup = (
-            torch.log(tensors[size_factor_key][has_no_label.reshape(-1)]) if size_factor_key in tensors.keys() else None
-        )
-
-        input_dict = {
-            'sup': {'zd_x': zd_x_sup, 'zy_x': zy_x_sup, 'library': library_sup, 'size_factor': size_factor_sup},
-            'unsup': {'zy_x': zy_x_unsup, 'zd_x': zd_x_unsup, 'size_factor': size_factor_unsup,
-                      'library': library_unsup},
-            'has_label': has_label.reshape(-1),
-            'has_no_label': has_no_label.reshape(-1),
-            'd': d,
-            'y': y
-        }
-        return input_dict
+        return {'d': tensors[REGISTRY_KEYS.BATCH_KEY], 'y': tensors[REGISTRY_KEYS.LABELS_KEY], **inference_outputs}
 
     @auto_move_data
     def inference(self,
@@ -222,137 +190,95 @@ class TunedDIVA(BaseModuleClass):
 
         has_no_label, has_label = self._get_label_masks(y)
 
-        x_ = x
-        library_sup = library_unsup = None
+        library = torch.empty((x.shape[0], 1), device=self.device, dtype=torch.float)
+        zd_x = torch.empty((x.shape[0], self.n_latent_d), device=self.device, dtype=torch.float)
+        zy_x = torch.empty((x.shape[0], self.n_latent_y), device=self.device, dtype=torch.float)
 
-        if self.use_observed_lib_size:
-            library_sup = torch.log(x[has_label.reshape(-1, ), :].sum(1)).unsqueeze(1)
-            library_unsup = torch.log(x[has_no_label.reshape(-1, ), :].sum(1)).unsqueeze(1)
+        library[has_label] = torch.log(x[has_label, :].sum(1)).unsqueeze(1)
+        library[has_no_label] = torch.log(x[has_no_label, :].sum(1)).unsqueeze(1)
         if self.log_variational:
-            x_ = torch.log(1 + x_)
+            x = torch.log(1 + x)
 
-        x_sup = x_[has_label.reshape(-1, ), :]
-        x_unsup = x_[has_no_label.reshape(-1, ), :]
+        x_sup = x[has_label, :]
+        x_unsup = x[has_no_label, :]
 
         # tuples of posterior distribution and drawn latent variable
-        q_zd_x_sup, zd_x_sup = self.posterior_zd_x_encoder(x_sup)
-        q_zy_x_sup, zy_x_sup = self.posterior_zy_x_encoder(x_sup)
+        q_zd_x, zd_x = self.posterior_zd_x_encoder(x)  # .copy() ?!?
+        q_zy_x_sup, zy_x[has_label] = self.posterior_zy_x_encoder(x_sup)
 
         # inference unsup
-        q_zd_x_unsup, zd_x_unsup = self.posterior_zd_x_encoder(x_unsup)
-        q_zy_x_unsup, zy_x_unsup = self.posterior_zy_x_encoder(x_unsup)
-
-        ql_unsup = ql_sup = None
-        if not self.use_observed_lib_size:
-            ql_sup, library_encoded_sup = self.l_encoder(x_sup, d[has_label].reshape(-1, 1))
-            ql_unsup, library_encoded_unsup = self.l_encoder(x_unsup, d[has_no_label].reshape(-1, 1))
-            library_sup = library_encoded_sup
-            library_unsup = library_encoded_unsup
+        q_zy_x_unsup, zy_x[has_no_label] = self.posterior_zy_x_encoder(x_unsup)
 
         if n_samples > 1:
-            utran_zd_sup = q_zd_x_sup.rsample((n_samples,))
-            utran_zd_unsup = q_zd_x_unsup.rsample((n_samples,))
-            zd_x_sup = self.posterior_zd_x_encoder.z_transformation(utran_zd_sup)
-            zd_x_unsup = self.posterior_zd_x_encoder.z_transformation(utran_zd_unsup)
-            utran_zy_sup = q_zy_x_sup.rsample((n_samples,))
-            utran_zy_unsup = q_zy_x_unsup.rsample((n_samples,))
-            zy_x_sup = self.posterior_zy_x_encoder.z_transformation(utran_zy_sup)
-            zy_x_unsup = self.posterior_zy_x_encoder.z_transformation(utran_zy_unsup)
-
-            if self.use_observed_lib_size:
-                library_sup = library_sup.unsqueeze(0).expand(
-                    (n_samples, library_sup.size(0), library_sup.size(1))
-                )
-                library_unsup = library_unsup.unsqueeze(0).expand(
-                    (n_samples, library_unsup.size(0), library_unsup.size(1))
-                )
-            else:
-                library_unsup = ql_unsup.rsample((n_samples,))
-                library_sup = ql_sup.rsample((n_samples,))
-
+            utran_zd = q_zd_x.rsample((n_samples,))
+            zd_x = self.posterior_zd_x_encoder.z_transformation(utran_zd)
+            utran_zy = torch.empty((n_samples, *zy_x.shape), device=self.device, dtype=torch.float)
+            utran_zy[:, has_label, :] = q_zy_x_sup.rsample((n_samples,))
+            utran_zy[:, has_no_label, :] = q_zy_x_unsup.rsample((n_samples,))
+            zy_x = self.posterior_zy_x_encoder.z_transformation(utran_zy)
         outputs = {
-            'sup': {'zd_x': zd_x_sup, 'zy_x': zy_x_sup, 'q_zd_x': q_zd_x_sup, 'q_zy_x': q_zy_x_sup,
-                    'library': library_sup},
-            'unsup': {'zd_x': zd_x_unsup, 'zy_x': zy_x_unsup, 'q_zd_x': q_zd_x_unsup,
-                      'q_zy_x': q_zy_x_unsup, 'library': library_unsup}
+            'zd_x': zd_x, 'zy_x': zy_x, 'library': library, 'q_zd_x': q_zd_x, 'q_zy_x_sup': q_zy_x_sup,
+            'q_zy_x_unsup': q_zy_x_unsup, 'has_label': has_label, 'has_no_label': has_no_label
         }
         return outputs
 
     @auto_move_data
-    def _get_label_masks(self, y):
+    def _get_label_masks(self, y) -> (torch.Tensor, torch.Tensor):
         """correct use: has_no_label, has_label = self._get_label_masks(y)"""
-        return (t := y == self.n_labels), ~t
+        return (t := (y == self.n_labels).reshape(-1, )), ~t
 
     @auto_move_data
     def generative(
         self,
-        sup: dict[str, torch.Tensor],
-        unsup: dict[str, torch.Tensor],
+        d: torch.Tensor, y: torch.Tensor,
+        zd_x: torch.Tensor, zy_x: torch.Tensor,
+        library: torch.Tensor,
         has_label: torch.Tensor,
         has_no_label: torch.Tensor,
-        d: torch.Tensor,
-        y: torch.Tensor,
-        size_factor=None
+        **kwargs
     ) -> dict[str, torch.Tensor | torch.distributions.Distribution]:
 
-        dirx = {'sup': sup, 'unsup': unsup}
+        px_scale, px_r, px_rate, px_dropout = self.reconst_dxy_decoder(
+            self.dispersion,
+            torch.cat([zd_x, zy_x], dim=-1),
+            library
+        )
 
-        output = dict()
+        if self.dispersion == "gene":
+            px_r = self.px_r
+        else:
+            raise NotImplementedError("Currently only supporting `gene` dispersion")
 
-        for psx in ['sup', 'unsup']:
+        px_r = torch.exp(px_r)
 
-            dirx_psx = dirx[psx]
-            size_factor = dirx_psx['library']
-            zd_x = dirx_psx['zd_x']
-            zy_x = dirx_psx['zy_x']
-
-            px_scale, px_r, px_rate, px_dropout = self.reconst_dxy_decoder(
-                self.dispersion,
-                torch.cat([zd_x, zy_x], dim=-1),
-                size_factor
+        if self.gene_likelihood == "zinb":
+            px_recon = ZeroInflatedNegativeBinomial(
+                mu=px_rate,
+                theta=px_r,
+                zi_logits=px_dropout,
+                scale=px_scale,
+            )
+        elif self.gene_likelihood == "nb":
+            px_recon = NegativeBinomial(mu=px_rate, theta=px_r, scale=px_scale)
+        elif self.gene_likelihood == "poisson":
+            px_recon = Poisson(px_rate, scale=px_scale)
+        else:
+            raise ValueError(
+                f"gene_likelihood must be one of ['zinb', 'nb','poisson'], but input was {self.gene_likelihood}"
             )
 
-            if self.dispersion == "gene":
-                px_r = self.px_r
-            else:
-                raise NotImplementedError("Currently only supporting `gene` dispersion")
+        # priors
+        d_hat = self.aux_d_zd_enc(zd_x)
+        y_hat = self.aux_y_zy_enc(zy_x)
 
-            px_r = torch.exp(px_r)
+        y[has_no_label] = torch.argmax(y_hat[has_no_label], dim=1).view(-1, 1)
 
-            if self.gene_likelihood == "zinb":
-                px_recon = ZeroInflatedNegativeBinomial(
-                    mu=px_rate,
-                    theta=px_r,
-                    zi_logits=px_dropout,
-                    scale=px_scale,
-                )
-            elif self.gene_likelihood == "nb":
-                px_recon = NegativeBinomial(mu=px_rate, theta=px_r, scale=px_scale)
-            elif self.gene_likelihood == "poisson":
-                px_recon = Poisson(px_rate, scale=px_scale)
-            else:
-                raise ValueError(
-                    f"gene_likelihood must be one of ['zinb', 'nb','poisson'], but input was {self.gene_likelihood}"
-                )
+        p_zd_d, _ = self.prior_zd_d_encoder(one_hot(d, self.n_batch))
+        p_zy_y_unsup, _ = self.prior_zy_y_encoder(one_hot(y[has_no_label], self.n_labels))
+        p_zy_y_sup, _ = self.prior_zy_y_encoder(one_hot(y[has_label], self.n_labels))
 
-            # priors
-            d_hat = self.aux_d_zd_enc(zd_x)
-            y_hat = self.aux_y_zy_enc(zy_x)
-
-            if psx == 'sup':
-                d_idx = d[has_label]
-                y_idx = y[has_label]
-            else:
-                d_idx = d[has_no_label]
-                y_idx = torch.argmax(y_hat, dim=1).reshape(-1, 1)
-
-
-            p_zd_d, _ = self.prior_zd_d_encoder(one_hot(d_idx, self.n_batch))
-            p_zy_y, _ = self.prior_zy_y_encoder(one_hot(y_idx, self.n_labels))
-
-            output[psx] = {'px_recon': px_recon, 'd_hat': d_hat, 'y_hat': y_hat, 'p_zd_d': p_zd_d, 'p_zy_y': p_zy_y}
-
-        return output
+        return {'px_recon': px_recon, 'd_hat': d_hat, 'y_hat': y_hat, 'p_zd_d': p_zd_d, 'p_zy_y_sup': p_zy_y_sup,
+                'p_zy_y_unsup': p_zy_y_unsup, 'y': y}
 
     def loss(
         self,
@@ -365,49 +291,38 @@ class TunedDIVA(BaseModuleClass):
     ) -> LossOutput:
 
         x = tensors[REGISTRY_KEYS.X_KEY]
-        y = tensors[REGISTRY_KEYS.LABELS_KEY]
-
-        has_no_label, has_label = self._get_label_masks(y)
+        y = generative_outputs['y']
         d = tensors[REGISTRY_KEYS.BATCH_KEY]
 
-        x_sup = x[has_label.reshape(-1, ), :]
-        x_unsup = x[has_no_label.reshape(-1, ), :]
+        has_no_label, has_label = inference_outputs['has_no_label'], inference_outputs['has_label']
 
-        d_sup = d[has_label].reshape(-1, 1)
-        d_unsup = d[has_no_label].reshape(-1, 1)
-
-        y_sup = y[has_label].reshape(-1, 1)
-
+        # avoid repeating the indexing process
+        d_sup = d[has_label, :]
+        d_unsup = d[has_no_label, :]
+        y_sup = y[has_label, :]
 
         # reconstruction_loss
-        reconst_loss = torch.zeros_like(y, device=y.device, dtype=torch.float)
-
-        reconst_loss[has_label] = -generative_outputs['sup']["px_recon"].log_prob(x_sup).sum(-1)
-        reconst_loss[has_no_label] = -generative_outputs['unsup']["px_recon"].log_prob(x_unsup).sum(-1)
-
-        kl_zd = torch.zeros_like(y, dtype=torch.float, device=y.device)
-        kl_zy = torch.zeros_like(y, dtype=torch.float, device=y.device)
-        kl_zd[has_label] = kl_weight
+        neg_reconstruction_loss = -generative_outputs["px_recon"].log_prob(x).sum(-1)
+        kl_zy = torch.empty_like(y, dtype=torch.float, device=y.device)
 
         # KL-loss
+        kl_zd = kl(
+            inference_outputs['q_zd_x'],
+            generative_outputs['p_zd_d'],
+        ).sum(dim=1)
         kl_zy[has_label] = kl(
-            inference_outputs['sup']['q_zy_x'],
-            generative_outputs['sup']['p_zy_y'],
-        ).sum(dim=1)
-        kl_zd[has_label] = kl(
-            inference_outputs['sup']['q_zd_x'],
-            generative_outputs['sup']['p_zd_d'],
-        ).sum(dim=1)
-        kl_zd[has_no_label] = kl(
-            inference_outputs['unsup']['q_zd_x'],
-            generative_outputs['unsup']['p_zd_d'],
-        ).sum(dim=1)
+            inference_outputs['q_zy_x_sup'],
+            generative_outputs['p_zy_y_sup'],
+        ).sum(dim=1).view(-1, 1)
 
-        kl_zy[has_no_label] = - (generative_outputs['unsup']['p_zy_y'].log_prob(inference_outputs['unsup']['zy_x']).sum(-1)
-                                - inference_outputs['unsup']['q_zy_x'].log_prob(inference_outputs['unsup']['zy_x']).sum(-1))
-
-        # TODO: do weighting!!!!
-        weighted_kl_local = kl_weight * (self.beta_d*kl_zd + self.beta_y*kl_zy)
+        kl_zy[has_no_label] = - (
+            generative_outputs['p_zy_y_unsup'].log_prob(inference_outputs['zy_x'][has_no_label]).sum(-1)
+            - inference_outputs['q_zy_x_unsup'].log_prob(inference_outputs['zy_x'][has_no_label]).sum(-1)).view(-1,
+                                                                                                                1)
+        # TODO: add weighting here!
+        weighted_kl_local = kl_weight * (
+            self.beta_d * kl_zd * self._kl_weights_d.to(self.device)[d] + self.beta_y * kl_zy *
+            self._kl_weights_y.to(self.device)[y])
 
         # auxiliary regularizer:
         # TODO: include?!?
@@ -416,50 +331,45 @@ class TunedDIVA(BaseModuleClass):
 
         # auxiliary losses from the classifiers
         # 1. bach loss
-        aux_d_sup = F.cross_entropy(generative_outputs['sup']['d_hat'], d_sup.view(-1, ))
-        aux_d_unsup = F.cross_entropy(generative_outputs['unsup']['d_hat'], d_unsup.view(-1, ))
-        aux_d = aux_d_sup + aux_d_unsup
+        aux_d = F.cross_entropy(generative_outputs['d_hat'], d.view(-1, ))
         extra_metrics["aux_d"] = aux_d
 
         # 2. cell-type loss
-        aux_y_sup = F.cross_entropy(generative_outputs['sup']['y_hat'], y_sup.view(-1, ))
+        aux_y_sup = F.cross_entropy(generative_outputs['y_hat'], y.view(-1, ),
+                                    weight=self._ce_weights_y.to(self.device))
         extra_metrics["aux_y"] = aux_y_sup
 
         aux_loss = self.alpha_d * aux_d + self.alpha_y * aux_y_sup
 
-
-        final_loss = torch.mean(reconst_loss + weighted_kl_local) + aux_loss
-
+        final_loss = torch.mean(neg_reconstruction_loss + weighted_kl_local) + ce_weight * aux_loss
 
         kl_local = {
             "kl_divergence_zd": kl_zd,
             "kl_divergence_zy": kl_zy
         }
 
-        return LossOutput(final_loss, reconst_loss, kl_local, extra_metrics=extra_metrics)
-
+        return LossOutput(final_loss, neg_reconstruction_loss, kl_local, extra_metrics=extra_metrics)
 
     def sample(self, *args, **kwargs):
         pass
 
     def init_ce_weight_y(self, adata: AnnData, indices, label_key: str):
-        return
         # BEWARE!!! Validation loss will use training weighting for CE!
         """Does not work if train split does not contain all celltypes"""
-        # print(cat_d.min(),cat_d.max())
-        # print(np.array(range(self.n_batch)))
-        cat_y = adata.obs[label_key].cat.codes[indices]
-        self._ce_weights_y = compute_class_weight('balanced', classes=np.array(range(self.n_labels)), y=cat_y)
+        train_adata_labels = adata[indices].obs[label_key]
+        cat_y = train_adata_labels[train_adata_labels != "unknown"].cat.codes
+        self._ce_weights_y = torch.tensor(
+            compute_class_weight('balanced', classes=np.array(range(self.n_labels)), y=cat_y), dtype=torch.float)
 
     def init_kl_weights(self, adata: AnnData, indices, label_key: str, batch_key: str):
-        return
-        cat_y = adata.obs[label_key].cat.codes[indices]
-        cat_d = adata.obs[batch_key].cat.codes[indices]
+        train_adata_y_labels = adata[indices].obs[label_key]
+        train_adata_d_labels = adata[indices].obs[batch_key]
 
-        cat_d_holdout = np.setdiff1d(np.unique(adata.obs[batch_key].cat.codes),
-                                     np.unique(adata.obs[batch_key].cat.codes[indices]))
-        cat_y_holdout = np.setdiff1d(np.unique(adata.obs[label_key].cat.codes),
-                                     np.unique(adata.obs[label_key].cat.codes[indices]))
+        cat_y = train_adata_y_labels[train_adata_y_labels != "unknown"].cat.codes
+        cat_d = train_adata_d_labels.cat.codes
+
+        cat_d_holdout = np.setdiff1d(np.unique(adata.obs[batch_key].cat.codes), np.unique(cat_d))
+        cat_y_holdout = np.setdiff1d(np.unique((t := adata.obs[label_key])[t != "unknown"].cat.codes), cat_y)
 
         """Note: We might have batches only present in validation set. This needs to be taken into consideration here.
         They'll get very high training weights, but since we do not use those batches during training, that does
@@ -469,8 +379,11 @@ class TunedDIVA(BaseModuleClass):
         cat_d_corrected = np.append(cat_d, range(self.n_batch))
         cat_y_corrected = np.append(cat_y, range(self.n_labels))
 
-        self._kl_weights_y = compute_class_weight('balanced', classes=np.array(range(self.n_labels)), y=cat_y_corrected)
-        self._kl_weights_d = compute_class_weight('balanced', classes=np.array(range(self.n_batch)), y=cat_d_corrected)
+        self._kl_weights_y = torch.from_numpy(
+            compute_class_weight('balanced', classes=np.array(range(self.n_labels)), y=cat_y_corrected))
+
+        self._kl_weights_d = torch.from_numpy(
+            compute_class_weight('balanced', classes=np.array(range(self.n_batch)), y=cat_d_corrected))
 
         self._kl_weights_y[cat_y_holdout] = 1
         self._kl_weights_d[cat_d_holdout] = 1
