@@ -1435,7 +1435,7 @@ class scDIVA_plan(TrainingPlan):
         n_epochs_ce_warmup: Tunable[int],
         classifier_scale_threshold: Tunable[float] = 0.9,
         classifier_curvature: Tunable[float] = 1,
-        log_extra_train_metrics: bool = True,   # if False, training is significantly faster
+        log_extra_train_metrics: bool = False,   # if False, training is significantly faster
         **loss_kwargs,
     ):
         super().__init__(module=module,
@@ -1477,22 +1477,22 @@ class scDIVA_plan(TrainingPlan):
         self.f1_prior_train = F1Score(task='multiclass', num_classes=self.module.n_labels, average='macro')
 
         self.accuracy = {
-            'validation': {'internal': self.accuracy_internal,
-                           'prior': self.accuracy_prior},
-            'train': {'internal': self.accuracy_internal_train,
-                      'prior': self.accuracy_prior_train}
+            'validation': {'internal_classifier': self.accuracy_internal,
+                           'prior_based': self.accuracy_prior},
+            'train': {'internal_classifier': self.accuracy_internal_train,
+                      'prior_based': self.accuracy_prior_train}
         }
         self.balanced_accuracy = {
-            'validation': {'internal': self.balanced_accuracy_internal,
-                           'prior': self.balanced_accuracy_prior},
-            'train': {'internal': self.balanced_accuracy_internal_train,
-                      'prior': self.balanced_accuracy_prior_train}
+            'validation': {'internal_classifier': self.balanced_accuracy_internal,
+                           'prior_based': self.balanced_accuracy_prior},
+            'train': {'internal_classifier': self.balanced_accuracy_internal_train,
+                      'prior_based': self.balanced_accuracy_prior_train}
         }
         self.f1 = {
-            'validation': {'internal': self.f1_internal,
-                           'prior': self.f1_prior},
-            'train': {'internal': self.f1_internal_train,
-                      'prior': self.f1_prior_train}
+            'validation': {'internal_classifier': self.f1_internal,
+                           'prior_based': self.f1_prior},
+            'train': {'internal_classifier': self.f1_internal_train,
+                      'prior_based': self.f1_prior_train}
         }
 
         self.max_classifier_weight = max_classifier_weight
@@ -1546,7 +1546,8 @@ class scDIVA_plan(TrainingPlan):
         # for metric in [*self.accuracy.values(), *self.balanced_accuracy.values(), *self.f1.values()]:
         #     metric.to(self.module.device)
         for c_mode in ['prior_based', 'internal_classifier']:
-            y_true, y_pred = self.module.predict(batch, c_mode, use_mean_as_sample=True)  # makes for more stable logging
+            y_pred = self.module.predict(batch, c_mode, use_mean_as_sample=True)  # makes for more stable logging
+            y_true = batch[REGISTRY_KEYS.LABELS_KEY]
             y_true = y_true.ravel()
 
             self.balanced_accuracy[mode][c_mode](y_pred, y_true)
