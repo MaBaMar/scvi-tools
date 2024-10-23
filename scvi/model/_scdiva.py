@@ -271,8 +271,8 @@ class SCDIVA(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         scdl = self._make_data_loader(adata=adata, indices=indices, batch_size=batch_size)
 
         for tensors in scdl:
-            y_true.append(self.module.predict(tensors, mode, use_mean_as_samples))
-            y_pred.append(tensors[REGISTRY_KEYS.LABELS_KEY])
+            y_pred.append(self.module.predict(tensors, mode, use_mean_as_samples))
+            y_true.append(tensors[REGISTRY_KEYS.LABELS_KEY])
 
         return torch.cat(y_true, dim=0), torch.cat(y_pred, dim=0)
 
@@ -626,28 +626,34 @@ class TunedSCDIVA(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         if return_dist:
             raise NotImplementedError
 
+
         for tensors in scdl:
             inference_inputs = self.module._get_inference_input(tensors)
             outputs = self.module.inference(**inference_inputs)
             q_zd_x = outputs["q_zd_x"]
-            q_zy_x = outputs["q_zy_x"]
+            q_zy_x_sup = outputs["q_zy_x_sup"]
+            q_zy_x_unsup = outputs["q_zy_x_unsup"]
+            has_label = outputs["has_label"]
+            has_no_label = outputs["has_no_label"]
 
             if give_mean:
                 if self.module.latent_distribution == "ln":
                     samples_zd_x = q_zd_x.sample([mc_samples])
+                    samples_zy_x = torch.empty((*samples_zd_x.shape[:-1], self._module_kwargs["n_latent_y"]), device=self.device, dtype=torch.float)
+                    samples_zy_x[:,has_label,:] = q_zy_x_sup.sample([mc_samples])
+                    samples_zy_x[:,has_no_label,:] = q_zy_x_unsup.sample([mc_samples])
                     zd_x = torch.nn.functional.softmax(samples_zd_x, dim=-1)
                     zd_x = zd_x.mean(dim=0)
-
-                    samples_zy_x = q_zy_x.sample([mc_samples])
                     zy_x = torch.nn.functional.softmax(samples_zy_x, dim=-1)
                     zy_x = zy_x.mean(dim=0)
 
                 else:
                     zd_x = q_zd_x.loc
-                    zy_x = q_zy_x.loc
+                    zy_x = torch.empty((*zd_x.shape[:-1], self._module_kwargs["n_latent_y"]), device=self.device, dtype=torch.float)
+                    zy_x[has_label,:] = q_zy_x_sup.loc
+                    zy_x[has_no_label,:] = q_zy_x_unsup.loc
             else:
                 zd_x = outputs["zd_x"]
-                zx_x = outputs["zx_x"]
                 zy_x = outputs["zy_x"]
 
             cat_vecs = [zd_x.cpu(), zy_x.cpu()]
@@ -685,10 +691,10 @@ class TunedSCDIVA(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         scdl = self._make_data_loader(adata=adata, indices=indices, batch_size=batch_size)
 
         for tensors in scdl:
-            y_true.append(self.module.predict(tensors, mode, use_mean_as_samples))
-            y_pred.append(tensors[REGISTRY_KEYS.LABELS_KEY])
+            y_pred.append(self.module.predict(tensors, mode, use_mean_as_samples))
+            y_true.append(tensors[REGISTRY_KEYS.LABELS_KEY])
 
-        return torch.cat(y_true, dim=0), torch.cat(y_pred, dim=0)
+        return torch.cat(y_true, dim=0).cpu(), torch.cat(y_pred, dim=0).cpu()
 
     def train(
         self,

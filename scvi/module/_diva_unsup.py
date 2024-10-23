@@ -427,7 +427,9 @@ class TunedDIVA(BaseModuleClass):
             zy_x = dist.mean
 
         if mode == 'internal_classifier':
-            _, y_pred = self.aux_y_zy_enc(zy_x).max(dim=1)
+            # print(self.aux_y_zy_enc(zy_x)[0])
+            # print(torch.argmax(self.aux_y_zy_enc(zy_x), dim=1))
+            y_pred = torch.argmax(self.aux_y_zy_enc(zy_x), dim=1)
             return y_pred
 
         if mode == 'prior_based':
