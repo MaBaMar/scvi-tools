@@ -427,13 +427,8 @@ class TunedDIVA(BaseModuleClass):
             zy_x = dist.mean
 
         if mode == 'internal_classifier':
-            if not self._use_celltype_classifier:
-                warnings.warn('internal_classifier mode requires `alpha_y > 0`. Using prior_based mode instead.',
-                              category=RuntimeWarning)
-                mode = 'prior_based'
-            else:
-                _, y_pred = self.aux_y_zy_enc(zy_x).max(dim=1)
-                return y_pred
+            _, y_pred = self.aux_y_zy_enc(zy_x).max(dim=1)
+            return y_pred
 
         if mode == 'prior_based':
             encodings = torch.eye(self.n_labels, device=self.device)
