@@ -389,8 +389,8 @@ class TunedDIVA(BaseModuleClass):
         self._kl_weights_y[cat_y_holdout] = 1
         self._kl_weights_d[cat_d_holdout] = 1
 
-
     @torch.inference_mode()
+    @auto_move_data
     def predict(self, tensors, mode: Literal['prior_based', 'internal_classifier'], use_mean_as_sample=False):
         """
         Uses the model's internal prediction mechanisms to make predictions on query data. Do not use this method if you
