@@ -13,7 +13,7 @@ from scvi.module.base import BaseModuleClass, LossOutput, auto_move_data
 from scvi.nn import DecoderSCVI, Encoder, one_hot
 from sklearn.utils import compute_class_weight
 from torch import nn
-from torch.distributions import kl_divergence as kl, Independent
+from torch.distributions import kl_divergence as kl, Independent, OneHotCategorical
 from torch.nn import functional as F
 
 
@@ -273,7 +273,7 @@ class TunedDIVA(BaseModuleClass):
         d_hat = self.aux_d_zd_enc(zd_x)
         y_hat = self.aux_y_zy_enc(zy_x)
 
-        y[has_no_label] = torch.argmax(y_hat.detach().clone()[has_no_label], dim=1).view(-1, 1)
+        y[has_no_label] = torch.argmax(y_hat.clone()[has_no_label], dim=1).view(-1, 1)
 
         p_zd_d, _ = self.prior_zd_d_encoder(one_hot(d, self.n_batch))
         p_zy_y_unsup, _ = self.prior_zy_y_encoder(one_hot(y[has_no_label], self.n_labels))
@@ -317,7 +317,12 @@ class TunedDIVA(BaseModuleClass):
             generative_outputs['p_zy_y_sup'],
         ).sum(dim=1).view(-1, 1)
 
-        kl_zy[has_no_label] = (inference_outputs['q_zy_x_unsup'].log_prob(inference_outputs['zy_x'][has_no_label])
+        # weighting for marginal
+        alpha_y = F.softmax(generative_outputs['y_hat'][has_no_label], dim=-1)
+        q_y = OneHotCategorical(alpha_y)
+        prob_qy = torch.exp(q_y.log_prob(one_hot(y[has_no_label], self.n_labels))).view(-1,1)
+        # compute expectation
+        kl_zy[has_no_label] = prob_qy * (inference_outputs['q_zy_x_unsup'].log_prob(inference_outputs['zy_x'][has_no_label])
                                - generative_outputs['p_zy_y_unsup'].log_prob(inference_outputs['zy_x'][has_no_label])
                                ).sum(-1).view(-1, 1)
 
@@ -335,8 +340,8 @@ class TunedDIVA(BaseModuleClass):
         aux_d = F.cross_entropy(generative_outputs['d_hat'], d.view(-1, ))
         extra_metrics["aux_d"] = aux_d
 
-        # 2. cell-type loss
-        aux_y_sup = F.cross_entropy(generative_outputs['y_hat'], y.view(-1, ),
+        # 2. cell-type classifier loss (only for unsupervised)
+        aux_y_sup = F.cross_entropy(generative_outputs['y_hat'][has_label], y.view(-1, )[has_label],
                                     weight=self._ce_weights_y.to(self.device))
         extra_metrics["aux_y"] = aux_y_sup
 
