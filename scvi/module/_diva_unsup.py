@@ -318,16 +318,16 @@ class TunedDIVA(BaseModuleClass):
         ).sum(dim=1).view(-1, 1)
 
         # weighting for marginal
-        # alpha_y = F.softmax(generative_outputs['y_hat'][has_no_label], dim=-1)
-        # q_y = OneHotCategorical(alpha_y)
-        # prob_qy = torch.exp(q_y.log_prob(one_hot(y[has_no_label], self.n_labels))).view(-1,1)
+        alpha_y = F.softmax(generative_outputs['y_hat'][has_no_label], dim=-1)
+        q_y = OneHotCategorical(alpha_y)
+        prob_qy = torch.exp(q_y.log_prob(one_hot(y[has_no_label], self.n_labels))).view(-1,1)
         # compute expectation
-        # kl_zy[has_no_label] = prob_qy * (inference_outputs['q_zy_x_unsup'].log_prob(inference_outputs['zy_x'][has_no_label])
-        #                        - generative_outputs['p_zy_y_unsup'].log_prob(inference_outputs['zy_x'][has_no_label])
-        #                        ).sum(-1).view(-1, 1)
-        kl_zy[has_no_label] = (inference_outputs['q_zy_x_unsup'].log_prob(inference_outputs['zy_x'][has_no_label])
+        kl_zy[has_no_label] = prob_qy * (inference_outputs['q_zy_x_unsup'].log_prob(inference_outputs['zy_x'][has_no_label])
                                - generative_outputs['p_zy_y_unsup'].log_prob(inference_outputs['zy_x'][has_no_label])
                                ).sum(-1).view(-1, 1)
+        # kl_zy[has_no_label] = (inference_outputs['q_zy_x_unsup'].log_prob(inference_outputs['zy_x'][has_no_label])
+        #                        - generative_outputs['p_zy_y_unsup'].log_prob(inference_outputs['zy_x'][has_no_label])
+        #                        ).sum(-1).view(-1, 1)
 
         weighted_kl_local = kl_weight * (
             self.beta_d * kl_zd * self._kl_weights_d.to(self.device)[d] + self.beta_y * kl_zy *
