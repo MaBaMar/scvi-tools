@@ -529,6 +529,53 @@ class LinearDecoderSCVI(nn.Module):
         return px_scale, px_r, px_rate, px_dropout
 
 
+class DecoderRQM(nn.modules):
+    """Decodes data from two different latent representations using three different decoders to support scARCHES"""
+    def __init__(
+        self,
+        n_input_y: int,
+        n_input_d: int,
+        n_layers: int,
+        n_hidden: int,
+        use_batch_norm: bool = False,
+        use_layer_norm: bool = False,
+        scale_activation: Literal["softmax", "softplus"] = "softmax",
+        **kwargs
+    ):
+        super().__init__()
+        self.joined_decoder = DecoderSCVI(
+            n_input=n_hidden,
+            n_layers=n_layers-1,
+            n_hidden=n_hidden,
+            use_batch_norm=use_batch_norm,
+            use_layer_norm=use_layer_norm,
+            scale_activation=scale_activation,
+            **kwargs
+        )
+
+        self.celltype_predecoder = FCLayers(
+            n_in=n_input_y,
+            n_out=n_hidden,
+            n_layers=0,
+            use_batch_norm=use_batch_norm,
+            use_layer_norm=use_layer_norm,
+            **kwargs
+        )
+
+        self.batch_predecoder = FCLayers(
+            n_in=n_input_d,
+            n_out=n_hidden,
+            n_layers=0,
+            use_batch_norm=use_batch_norm,
+            use_layer_norm=use_layer_norm,
+            **kwargs
+        )
+
+    def forward(self, dispersion: str, zy: torch.Tensor, zd: torch.Tensor, library: torch.Tensor):
+        z = self.batch_predecoder(zd) + self.batch_predecoder(zy)
+        return self.joined_decoder(dispersion, z, library)
+
+
 # Decoder
 class Decoder(nn.Module):
     """Decodes data from latent space to data space.

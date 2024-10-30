@@ -474,7 +474,6 @@ class TunedSCDIVA(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
     def __init__(self,
                  adata: AnnData | None = None,
                  n_latent_d: int = 4,
-                 n_latent_x: int = 4,
                  n_latent_y: int = 10,
                  dropout_rate: float = 0.1,
                  dispersion: Literal["gene", "gene-batch", "gene-label", "gene-cell"] = "gene",
@@ -505,7 +504,6 @@ class TunedSCDIVA(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
 
         self._module_kwargs = {
             "n_latent_d": n_latent_d,
-            "n_latent_x": n_latent_x,
             "n_latent_y": n_latent_y,
             "dropout_rate": dropout_rate,
             "dispersion": dispersion,
@@ -516,7 +514,7 @@ class TunedSCDIVA(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
 
         self._model_summary_string = (
             "DiSCVI model with the following parameters: \n"
-            f"n_latent_d: {n_latent_d}, n_latent_x: {n_latent_x}, n_latent_y: {n_latent_y}, "
+            f"n_latent_d: {n_latent_d}, n_latent_y: {n_latent_y}, "
             f"dropout_rate: {dropout_rate}, dispersion: {dispersion}, "
             f"gene_likelihood: {gene_likelihood}, latent_distribution: {latent_distribution}, "
         )
