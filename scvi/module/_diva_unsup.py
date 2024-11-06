@@ -93,7 +93,7 @@ class TunedDIVA(BaseModuleClass):
         use_layer_norm_decoder = use_layer_norm == "decoder" or use_layer_norm == "both"
 
         """reconstruction term p_theta(x|zd, zy)"""
-        self.reconst_dxy_decoder = DecoderSCVI(
+        self.reconstruction_dxy_decoder = DecoderSCVI(
             n_input=n_latent_d + n_latent_y,
             n_output=n_input,  # output dim of decoder = original input dim
             n_layers=decoder_n_layers,
@@ -240,7 +240,7 @@ class TunedDIVA(BaseModuleClass):
         **kwargs
     ) -> dict[str, torch.Tensor | torch.distributions.Distribution]:
 
-        px_scale, px_r, px_rate, px_dropout = self.reconst_dxy_decoder(
+        px_scale, px_r, px_rate, px_dropout = self.reconstruction_dxy_decoder(
             self.dispersion,
             torch.cat([zd_x, zy_x], dim=-1),
             library
