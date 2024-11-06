@@ -10,6 +10,7 @@ from ._peakvi import PEAKVI
 from ._scanvi import SCANVI
 from ._scvi import SCVI
 from ._scdiva import SCDIVA, TunedSCDIVA
+from ._scdivarqm import ScDiVarQM
 from ._totalvi import TOTALVI
 from ._utils import get_max_epochs_heuristic
 
@@ -28,4 +29,5 @@ __all__ = [
     "AmortizedLDA",
     "utils",
     "JaxSCVI",
+    "ScDiVarQM"
 ]

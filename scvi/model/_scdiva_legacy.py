@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import logging
 import warnings
 from typing import Literal, Optional, Sequence, Union
@@ -16,6 +18,7 @@ from scvi.model._utils import _init_library_size, get_max_epochs_heuristic, use_
 from scvi.model.base import RNASeqMixin, VAEMixin, BaseModelClass, UnsupervisedTrainingMixin
 from scvi.module import DIVA
 from scvi.module._diva_unsup import TunedDIVA
+from scvi.train import SemiSupervisedTrainingPlan
 from scvi.train._trainingplans import scDIVA_plan
 from scvi.utils import setup_anndata_dsp
 from torch.distributions import Independent
@@ -23,7 +26,7 @@ from torch.distributions import Independent
 logger = logging.getLogger(__name__)
 
 
-class SCDIVA(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
+class SCDIVALegacy(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
     """
     Domain independent single cell variational inference
     """
@@ -36,6 +39,7 @@ class SCDIVA(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         self,
         adata: AnnData | None = None,
         n_latent_d: int = 4,
+        n_latent_x: int = 4,
         n_latent_y: int = 10,
         dropout_rate: float = 0.1,
         dispersion: Literal["gene", "gene-batch", "gene-label", "gene-cell"] = "gene",
@@ -56,6 +60,7 @@ class SCDIVA(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
 
         self._module_kwargs = {
             "n_latent_d": n_latent_d,
+            "n_latent_x": n_latent_x,
             "n_latent_y": n_latent_y,
             "dropout_rate": dropout_rate,
             "dispersion": dispersion,
@@ -66,7 +71,7 @@ class SCDIVA(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
 
         self._model_summary_string = (
             "DiSCVI model with the following parameters: \n"
-            f"n_latent_d: {n_latent_d}, n_latent_y: {n_latent_y}, "
+            f"n_latent_d: {n_latent_d}, n_latent_x: {n_latent_x}, n_latent_y: {n_latent_y}, "
             f"dropout_rate: {dropout_rate}, dispersion: {dispersion}, "
             f"gene_likelihood: {gene_likelihood}, latent_distribution: {latent_distribution}, "
         )
@@ -92,6 +97,7 @@ class SCDIVA(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
                 n_batch=n_batch,
                 n_labels=self.summary_stats.n_labels,
                 n_latent_d=n_latent_d,
+                n_latent_x=n_latent_x,
                 n_latent_y=n_latent_y,
                 dropout_rate=dropout_rate,
                 dispersion=dispersion,
@@ -106,6 +112,8 @@ class SCDIVA(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
 
         if use_default_data_splitter:
             self._data_splitter_cls = DefaultDataSplitter
+
+        # TODO: complete
 
     @classmethod
     @setup_anndata_dsp.dedent
@@ -196,6 +204,7 @@ class SCDIVA(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
             inference_inputs = self.module._get_inference_input(tensors)
             outputs = self.module.inference(**inference_inputs)
             q_zd_x = outputs["q_zd_x"]
+            q_zx_x = outputs["q_zx_x"]
             q_zy_x = outputs["q_zy_x"]
 
             if give_mean:
@@ -208,14 +217,23 @@ class SCDIVA(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
                         samples_zy_x = q_zy_x.sample([mc_samples])
                         zy_x = torch.nn.functional.softmax(samples_zy_x, dim=-1)
                         zy_x = zy_x.mean(dim=0)
+
+                    if self.module._use_x_latent:
+                        samples_zx_x = q_zx_x.sample([mc_samples])
+                        zx_x = torch.nn.functional.softmax(samples_zx_x, dim=-1)
+                        zx_x = zx_x.mean(dim=0)
+
                 else:
                     zd_x = q_zd_x.loc
+                    zx_x = q_zx_x.loc if self.module._use_x_latent else None
                     zy_x = q_zy_x.loc if not self.module._unsupervised else None
             else:
                 zd_x = outputs["zd_x"]
+                zx_x = outputs["zx_x"]
                 zy_x = outputs["zy_x"]
 
             cat_vecs = [zd_x.cpu(),
+                        *([zx_x.cpu()] if self.module._use_x_latent else []),
                         *([zy_x.cpu()] if not self.module._unsupervised else [])]
             latent += [torch.cat(cat_vecs, dim=1)]
 
@@ -230,7 +248,9 @@ class SCDIVA(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         """
         latent = self.get_latent_representation(**kwargs)
         n_d = self._module_kwargs["n_latent_d"]
-        return latent[:, :n_d], latent[:, n_d:]
+        n_x = self._module_kwargs["n_latent_x"] + n_d
+        n_y = self._module_kwargs["n_latent_y"] + n_x
+        return latent[:, :n_d], latent[:, n_d:n_x], latent[:, n_x:n_y]
 
     @torch.inference_mode()
     def predict(
@@ -434,6 +454,17 @@ class SCDIVA(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
                 probs.append(p.log_prob(tensors.to(self.module.device)).detach().cpu().numpy())
             return np.array(probs)
 
+    def predict_with_priors(self,
+                            adata: Optional[AnnData] = None,
+                            indices: Optional[Sequence[int]] = None,
+                            batch_size: Optional[int] = None,
+                            ):
+        """
+        :returns: (y_true, y_pred) but using prior probabilities as predictor instead of internal classifier
+        TODO: remove - no longer needed, has been integrated in predict method
+        """
+        return self.predict(adata=adata, indices=indices, batch_size=batch_size, use_priors=True)
+
 
 class TunedSCDIVA(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
     _module_cls = TunedDIVA
@@ -597,6 +628,7 @@ class TunedSCDIVA(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         if return_dist:
             raise NotImplementedError
 
+
         for tensors in scdl:
             inference_inputs = self.module._get_inference_input(tensors)
             outputs = self.module.inference(**inference_inputs)
@@ -609,10 +641,9 @@ class TunedSCDIVA(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
             if give_mean:
                 if self.module.latent_distribution == "ln":
                     samples_zd_x = q_zd_x.sample([mc_samples])
-                    samples_zy_x = torch.empty((*samples_zd_x.shape[:-1], self._module_kwargs["n_latent_y"]), device=self.device,
-                                               dtype=torch.float)
-                    samples_zy_x[:, has_label, :] = q_zy_x_sup.sample([mc_samples])
-                    samples_zy_x[:, has_no_label, :] = q_zy_x_unsup.sample([mc_samples])
+                    samples_zy_x = torch.empty((*samples_zd_x.shape[:-1], self._module_kwargs["n_latent_y"]), device=self.device, dtype=torch.float)
+                    samples_zy_x[:,has_label,:] = q_zy_x_sup.sample([mc_samples])
+                    samples_zy_x[:,has_no_label,:] = q_zy_x_unsup.sample([mc_samples])
                     zd_x = torch.nn.functional.softmax(samples_zd_x, dim=-1)
                     zd_x = zd_x.mean(dim=0)
                     zy_x = torch.nn.functional.softmax(samples_zy_x, dim=-1)
@@ -621,8 +652,8 @@ class TunedSCDIVA(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
                 else:
                     zd_x = q_zd_x.loc
                     zy_x = torch.empty((*zd_x.shape[:-1], self._module_kwargs["n_latent_y"]), device=self.device, dtype=torch.float)
-                    zy_x[has_label, :] = q_zy_x_sup.loc
-                    zy_x[has_no_label, :] = q_zy_x_unsup.loc
+                    zy_x[has_label,:] = q_zy_x_sup.loc
+                    zy_x[has_no_label,:] = q_zy_x_unsup.loc
             else:
                 zd_x = outputs["zd_x"]
                 zy_x = outputs["zy_x"]
