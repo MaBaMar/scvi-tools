@@ -4,9 +4,6 @@ from __future__ import annotations
 from typing import Literal
 
 import torch
-from torch.distributions import kl_divergence as kl
-from torch.nn import functional as F
-
 from scvi import REGISTRY_KEYS
 from scvi._types import Tunable
 from scvi.distributions import ZeroInflatedNegativeBinomial, NegativeBinomial, Poisson
@@ -14,6 +11,9 @@ from scvi.module._diva_unsup import TunedDIVA
 from scvi.module.base import LossOutput, auto_move_data
 from scvi.nn import one_hot
 from scvi.nn._base_components import DecoderRQM
+from torch.distributions import kl_divergence as kl
+from torch.nn import functional as F
+from torch.nn.modules.module import T
 
 
 class RQMDiva(TunedDIVA):
@@ -45,10 +45,35 @@ class RQMDiva(TunedDIVA):
                  use_layer_norm: Literal["encoder", "decoder", "none", "both"] = "none",
                  ):
 
-        super().__init__(*locals())
+        super().__init__(
+            n_input=n_input,
+            n_batch=n_batch,
+            n_labels=n_labels,
+            n_latent_d=n_latent_d,
+            n_latent_y=n_latent_y,
+            beta_d=beta_d,
+            beta_y=beta_y,
+            alpha_d=alpha_d,
+            alpha_y=alpha_y,
+            priors_n_hidden=priors_n_hidden,
+            priors_n_layers=priors_n_layers,
+            posterior_n_hidden=posterior_n_hidden,
+            posterior_n_layers=posterior_n_layers,
+            decoder_n_hidden=decoder_n_hidden,
+            decoder_n_layers=decoder_n_layers,
+            dropout_rate=dropout_rate,
+            lib_encoder_n_hidden=lib_encoder_n_hidden,
+            lib_encoder_n_layers=lib_encoder_n_layers,
+            dispersion=dispersion,
+            log_variational=log_variational,
+            gene_likelihood=gene_likelihood,
+            latent_distribution=latent_distribution,
+            use_layer_norm=use_layer_norm,
+            use_batch_norm=use_batch_norm
+        )
 
         """reconstruction term p_theta(x|zd, zy) -> overwrite it with RQM compatible decoder"""
-        self.reconst_dxy_decoder = DecoderRQM(
+        self.reconstruction_dxy_decoder = DecoderRQM(
             n_input_y=n_latent_y,
             n_input_d=n_latent_d,
             n_output=n_input,  # output dim of decoder = original input dim
@@ -93,19 +118,20 @@ class RQMDiva(TunedDIVA):
                 (n_samples, library.size(0), library.size(1))
             )
 
-        outputs = {'zd_x': zd_x, 'zy_x': zy_x, 'q_zd_x': q_zd_x, 'q_zy_x': q_zy_x, 'library': library}
+        outputs = {'zd_x': zd_x, 'zy_x': zy_x, 'q_zd_x': q_zd_x, 'q_zy_x': q_zy_x, 'library': library, 'y': y}
         return outputs
 
     @auto_move_data
     def generative(
         self,
         d: torch.Tensor,
+        y: torch.Tensor,
         zd_x: torch.Tensor, zy_x: torch.Tensor,
         library: torch.Tensor,
         **kwargs
     ) -> dict[str, torch.Tensor | torch.distributions.Distribution]:
 
-        px_scale, px_r, px_rate, px_dropout = self.reconst_dxy_decoder.forward(
+        px_scale, px_r, px_rate, px_dropout = self.reconstruction_dxy_decoder.forward(
             self.dispersion,
             zy_x,
             zd_x,
@@ -142,7 +168,7 @@ class RQMDiva(TunedDIVA):
         p_zd_d, _ = self.prior_zd_d_encoder(one_hot(d, self.n_batch))
         p_zy_y, _ = self.prior_zy_y_encoder(one_hot(y, self.n_labels))
 
-        return {'px_recon': px_recon, 'd_hat': d_hat, 'y_hat': y_hat, 'p_zd_d': p_zd_d, 'p_zd_y': p_zy_y}
+        return {'px_recon': px_recon, 'd_hat': d_hat, 'y_hat': y_hat, 'p_zd_d': p_zd_d, 'p_zy_y': p_zy_y}
 
     def loss(
         self,
@@ -172,8 +198,8 @@ class RQMDiva(TunedDIVA):
         ).sum(dim=1)
 
         # KL loss
-        kl_local_for_warmup = (self.beta_d * kl_zd * torch.tensor(self._kl_weights_d, device=self.device)[d]
-                               + self.beta_y * kl_zy * torch.tensor(self._kl_weights_y, device=self.device)[y])
+        kl_local_for_warmup = (self.beta_d * kl_zd * self._kl_weights_d.to(self.device)[d]
+                               + self.beta_y * kl_zy * self._kl_weights_y.to(self.device)[y])
 
         aux_loss = (
             self.alpha_d * (aux_d := F.cross_entropy(generative_outputs["d_hat"], d.view(-1, )))
