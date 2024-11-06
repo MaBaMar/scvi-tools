@@ -529,12 +529,13 @@ class LinearDecoderSCVI(nn.Module):
         return px_scale, px_r, px_rate, px_dropout
 
 
-class DecoderRQM(nn.modules):
+class DecoderRQM(nn.Module):
     """Decodes data from two different latent representations using three different decoders to support scARCHES"""
     def __init__(
         self,
         n_input_y: int,
         n_input_d: int,
+        n_output: int,
         n_layers: int,
         n_hidden: int,
         use_batch_norm: bool = False,
@@ -543,8 +544,10 @@ class DecoderRQM(nn.modules):
         **kwargs
     ):
         super().__init__()
+
         self.joined_decoder = DecoderSCVI(
             n_input=n_hidden,
+            n_output=n_output,
             n_layers=n_layers-1,
             n_hidden=n_hidden,
             use_batch_norm=use_batch_norm,
@@ -572,7 +575,7 @@ class DecoderRQM(nn.modules):
         )
 
     def forward(self, dispersion: str, zy: torch.Tensor, zd: torch.Tensor, library: torch.Tensor):
-        z = self.batch_predecoder(zd) + self.batch_predecoder(zy)
+        z = self.batch_predecoder(zd) + self.celltype_predecoder(zy)
         return self.joined_decoder(dispersion, z, library)
 
 
