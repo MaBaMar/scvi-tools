@@ -33,7 +33,6 @@ class ScDiVarQM(SCDIVA, ArchesMixin):
         use_default_data_splitter=False,
         **kwargs
     ):
-        number_query_batches = len(adata.obs[REGISTRY_KEYS.BATCH_KEY].cat.categories)
         super_kwargs = {
             "alpha_d": 0,  # deactivate the batch classifier
             # "arches_batch_extension_size": number_query_batches  # TODO: implement
