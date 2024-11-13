@@ -19,7 +19,7 @@ class ScDiVarQM(SCDIVA, ArchesMixin):
     """
     Streamlined RQM implementation of scDIVA
     """
-
+    _module_cls = RQMDiva
     def __init__(
         self,
         adata: AnnData | None = None,
