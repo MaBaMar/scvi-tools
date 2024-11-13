@@ -2,15 +2,12 @@
 from __future__ import annotations
 
 import torch
-from model import SCDIVA
 from scvi import REGISTRY_KEYS
 from scvi.distributions import ZeroInflatedNegativeBinomial, NegativeBinomial, Poisson
 from scvi.module._diva import DIVA
 from scvi.module.base import LossOutput, auto_move_data
 from scvi.nn import one_hot
 from torch.distributions import kl_divergence as kl
-from torch.nn import functional as F
-from torch.nn.modules.module import T
 
 
 class RQMDiva(DIVA):
