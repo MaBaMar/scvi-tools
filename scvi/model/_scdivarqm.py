@@ -47,7 +47,6 @@ class ScDiVarQM(SCDIVA, ArchesMixin):
         # print(self.adata_manager.data_registry)
         # print(self.adata_manager.registry)
         # print(self.summary_stats.get("n_extra_continuous_covs", 0))
-        self.module = RQMDiva
 
     @staticmethod
     def _filter_dict(filterable: dict, f: Callable[[any, any], bool]) -> dict:
