@@ -298,11 +298,6 @@ class TunedDIVA(BaseModuleClass):
 
         has_no_label, has_label = inference_outputs['has_no_label'], inference_outputs['has_label']
 
-        # avoid repeating the indexing process
-        d_sup = d[has_label, :]
-        d_unsup = d[has_no_label, :]
-        y_sup = y[has_label, :]
-
         # reconstruction_loss
         neg_reconstruction_loss = -generative_outputs["px_recon"].log_prob(x).sum(-1)
         kl_zy = torch.empty_like(y, dtype=torch.float, device=y.device)

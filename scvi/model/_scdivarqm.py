@@ -10,6 +10,7 @@ from scvi.model._utils import parse_device_args
 from scvi.model.base import ArchesMixin, BaseModelClass
 from scvi.model.base._archesmixin import _get_loaded_data
 from scvi.model.base._utils import _validate_var_names, _initialize_model
+from scvi.module._diva_rqm import RQMDiva
 from scvi.nn._base_components import FCLayers
 from scvi.utils._docstrings import devices_dsp
 
@@ -46,6 +47,7 @@ class ScDiVarQM(SCDIVA, ArchesMixin):
         # print(self.adata_manager.data_registry)
         # print(self.adata_manager.registry)
         # print(self.summary_stats.get("n_extra_continuous_covs", 0))
+        self.module = RQMDiva
 
     @staticmethod
     def _filter_dict(filterable: dict, f: Callable[[any, any], bool]) -> dict:

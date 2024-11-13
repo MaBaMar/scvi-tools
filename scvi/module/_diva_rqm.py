@@ -1,91 +1,23 @@
 """streamlined DIVA implementation for RQM wrapping"""
 from __future__ import annotations
 
-from typing import Literal
-
 import torch
 from scvi import REGISTRY_KEYS
-from scvi._types import Tunable
 from scvi.distributions import ZeroInflatedNegativeBinomial, NegativeBinomial, Poisson
-from scvi.module._diva_unsup import TunedDIVA
+from scvi.module._diva import DIVA
 from scvi.module.base import LossOutput, auto_move_data
 from scvi.nn import one_hot
-from scvi.nn._base_components import RQMDecoder
 from torch.distributions import kl_divergence as kl
 from torch.nn import functional as F
-from torch.nn.modules.module import T
 
 
-class RQMDiva(TunedDIVA):
+class RQMDiva(DIVA):
 
-    def __init__(self,
-                 n_input: int,
-                 n_batch: int,
-                 n_labels: int,
-                 n_latent_d: int = 4,
-                 n_latent_y: int = 10,
-                 beta_d: float = 10,
-                 beta_y: float = 10,
-                 alpha_d: float = 100,
-                 alpha_y: float = 100,
-                 priors_n_hidden: int = 32,
-                 priors_n_layers: int = 1,
-                 posterior_n_hidden: int = 128,
-                 posterior_n_layers: int = 1,
-                 decoder_n_hidden: int = 128,
-                 decoder_n_layers: int = 1,
-                 dropout_rate: float = 0.1,
-                 lib_encoder_n_hidden: int = 128,
-                 lib_encoder_n_layers: int = 1,
-                 dispersion: Literal["gene", "gene-batch", "gene-label", "gene-cell"] = "gene",
-                 log_variational: Tunable[bool] = True,
-                 gene_likelihood: Literal["zinb", "nb", "poisson"] = "zinb",
-                 latent_distribution: Literal["normal", "ln"] = "normal",
-                 use_batch_norm: Literal["encoder", "decoder", "none", "both"] = "both",
-                 use_layer_norm: Literal["encoder", "decoder", "none", "both"] = "none",
-                 ):
-
-        super().__init__(
-            n_input=n_input,
-            n_batch=n_batch,
-            n_labels=n_labels,
-            n_latent_d=n_latent_d,
-            n_latent_y=n_latent_y,
-            beta_d=beta_d,
-            beta_y=beta_y,
-            alpha_d=alpha_d,
-            alpha_y=alpha_y,
-            priors_n_hidden=priors_n_hidden,
-            priors_n_layers=priors_n_layers,
-            posterior_n_hidden=posterior_n_hidden,
-            posterior_n_layers=posterior_n_layers,
-            decoder_n_hidden=decoder_n_hidden,
-            decoder_n_layers=decoder_n_layers,
-            dropout_rate=dropout_rate,
-            lib_encoder_n_hidden=lib_encoder_n_hidden,
-            lib_encoder_n_layers=lib_encoder_n_layers,
-            dispersion=dispersion,
-            log_variational=log_variational,
-            gene_likelihood=gene_likelihood,
-            latent_distribution=latent_distribution,
-            use_layer_norm=use_layer_norm,
-            use_batch_norm=use_batch_norm
-        )
-
-        """reconstruction term p_theta(x|zd, zy) -> overwrite it with RQM compatible decoder"""
-        self.reconstruction_dxy_decoder = RQMDecoder(
-            n_input_y=n_latent_y,
-            n_input_d=n_latent_d,
-            n_output=n_input,  # output dim of decoder = original input dim
-            n_layers=decoder_n_layers,
-            n_hidden=decoder_n_hidden,
-            use_batch_norm=use_batch_norm == "decoder" or use_batch_norm == "both",
-            use_layer_norm=use_layer_norm == "decoder" or use_layer_norm == "both",
-        )
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
 
     def _get_inference_input(self, tensors: dict[str, torch.Tensor], **kwargs):
-        return {'x': tensors[REGISTRY_KEYS.X_KEY], 'd': tensors[REGISTRY_KEYS.BATCH_KEY],
-                'y': tensors[REGISTRY_KEYS.LABELS_KEY]}
+        return {'x': tensors[REGISTRY_KEYS.X_KEY], 'd': tensors[REGISTRY_KEYS.BATCH_KEY]}
 
     def _get_generative_input(self, tensors: dict[str, torch.Tensor], inference_outputs: dict[str, torch.Tensor],
                               **kwargs):
@@ -96,7 +28,6 @@ class RQMDiva(TunedDIVA):
         self,
         x,
         d,
-        y,
         n_samples: int = 1,
         **kwargs
     ) -> dict[str, torch.Tensor | torch.distributions.Distribution]:
@@ -118,14 +49,13 @@ class RQMDiva(TunedDIVA):
                 (n_samples, library.size(0), library.size(1))
             )
 
-        outputs = {'zd_x': zd_x, 'zy_x': zy_x, 'q_zd_x': q_zd_x, 'q_zy_x': q_zy_x, 'library': library, 'y': y}
+        outputs = {'zd_x': zd_x, 'zy_x': zy_x, 'q_zd_x': q_zd_x, 'q_zy_x': q_zy_x, 'library': library}
         return outputs
 
     @auto_move_data
     def generative(
         self,
         d: torch.Tensor,
-        y: torch.Tensor,
         zd_x: torch.Tensor, zy_x: torch.Tensor,
         library: torch.Tensor,
         **kwargs
@@ -165,6 +95,8 @@ class RQMDiva(TunedDIVA):
         d_hat = self.aux_d_zd_enc(zd_x)
         y_hat = self.aux_y_zy_enc(zy_x)
 
+        y = torch.argmax(y_hat.clone(), dim=1).view(-1, 1)
+
         p_zd_d, _ = self.prior_zd_d_encoder(one_hot(d, self.n_batch))
         p_zy_y, _ = self.prior_zy_y_encoder(one_hot(y, self.n_labels))
 
@@ -192,32 +124,20 @@ class RQMDiva(TunedDIVA):
             inference_outputs['q_zd_x'],
             generative_outputs['p_zd_d'],
         ).sum(dim=1)
-        kl_zy = kl(
-            inference_outputs['q_zy_x'],
-            generative_outputs['p_zy_y'],
-        ).sum(dim=1)
+        kl_zy = (inference_outputs['q_zy_x'].log_prob(inference_outputs['zy_x']) - generative_outputs['p_zy_y'].log_prob(
+            inference_outputs['zy_x'])).sum(-1).view(-1, 1)
 
         # KL loss
         kl_local_for_warmup = (self.beta_d * kl_zd * self._kl_weights_d.to(self.device)[d]
                                + self.beta_y * kl_zy * self._kl_weights_y.to(self.device)[y])
 
-        aux_loss = (
-            self.alpha_d * (aux_d := F.cross_entropy(generative_outputs["d_hat"], d.view(-1, )))
-            + self.alpha_y * (
-                aux_y := F.cross_entropy(generative_outputs["y_hat"], y.view(-1, ), weight=self._ce_weights_y.to(self.device)))
-        )
-        extra_metrics = {
-            'aux_d': aux_d,
-            'aux_y': aux_y,
-        }
-
         weighted_kl_local = kl_weight * kl_local_for_warmup
 
-        loss = torch.mean(neg_reconstruction_loss + weighted_kl_local) + ce_weight * aux_loss
+        loss = torch.mean(neg_reconstruction_loss + weighted_kl_local)
 
         kl_local = {
             'kl_divergence_zd': kl_zd,
             'kl_divergence_zy': kl_zy,
         }
 
-        return LossOutput(loss, neg_reconstruction_loss, kl_local, extra_metrics=extra_metrics)
+        return LossOutput(loss, neg_reconstruction_loss, kl_local)
