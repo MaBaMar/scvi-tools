@@ -14,7 +14,7 @@ from scvi import REGISTRY_KEYS
 from scvi._types import Tunable
 from scvi.distributions import ZeroInflatedNegativeBinomial, NegativeBinomial, Poisson
 from scvi.module.base import BaseModuleClass, LossOutput, auto_move_data
-from scvi.nn import Encoder, one_hot, MeanOnlyEncoder, DecoderRQM
+from scvi.nn import Encoder, one_hot, MeanOnlyEncoder, RQMDecoder
 from sklearn.utils.class_weight import compute_class_weight
 from torch import nn
 from torch.distributions import Normal, kl_divergence as kl, MixtureSameFamily, Independent, Categorical
@@ -51,6 +51,7 @@ class DIVA(BaseModuleClass):
         dropout_rate: float = 0.1,
         lib_encoder_n_hidden: int = 128,
         lib_encoder_n_layers: int = 1,
+        # arches_batch_extension_size: int = 0,
         dispersion: Literal["gene", "gene-batch", "gene-label", "gene-cell"] = "gene",
         log_variational: Tunable[bool] = True,
         gene_likelihood: Literal["zinb", "nb", "poisson"] = "zinb",
@@ -65,7 +66,7 @@ class DIVA(BaseModuleClass):
         library_log_means: Optional[np.ndarray] = None,
         library_log_vars: Optional[np.ndarray] = None,
         extra_encoder_kwargs: Optional[dict] = None,
-        extra_decoder_kwargs: Optional[dict] = None
+        extra_decoder_kwargs: Optional[dict] = None,
     ):
 
         """
@@ -115,6 +116,9 @@ class DIVA(BaseModuleClass):
         prior_variance_y
             If this is not `None`, the model will use the given constant variance for all cell-type priors along all
             dimensions instead of learning it. If `use_learnable_priors` is `False`, this value will be ignored.
+        arches_batch_extension_size
+            This parameter can be used to internally extend the input size and is used for training with scARCHES. The
+            parameter should never be set manually. Instead, the corresponding modules will set it automatically.
         posterior_n_hidden
             Number of hidden units in the posterior encoders. All posteriors use the same amount of hidden units to
             reduce hyperparameter count.
@@ -153,8 +157,6 @@ class DIVA(BaseModuleClass):
             Whether to use batch norm in layers.
         use_layer_norm
             Whether to use layer norm in layers.
-        use_linear_decoder
-            Whether to use a linear decoder instead of the default non-linear one.
         use_linear_batch_classifier
             Whether to make the batch classifier linear. This parameter is ignored if the batch classifier is
             deactivated.
@@ -251,7 +253,7 @@ class DIVA(BaseModuleClass):
         """reconstruction term p_theta(x|zd, zx, zy)"""
 
         # We feed the parameters to the decoder as [d, x, y] TODO: use in forward
-        self.reconstruction_dxy_decoder = DecoderRQM(
+        self.reconstruction_dxy_decoder = RQMDecoder(
             n_input_y=n_latent_y,
             n_input_d=n_latent_d,
             n_output=n_input,  # output dim of decoder = original input dim

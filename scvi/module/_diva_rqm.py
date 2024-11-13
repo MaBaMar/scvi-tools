@@ -10,7 +10,7 @@ from scvi.distributions import ZeroInflatedNegativeBinomial, NegativeBinomial, P
 from scvi.module._diva_unsup import TunedDIVA
 from scvi.module.base import LossOutput, auto_move_data
 from scvi.nn import one_hot
-from scvi.nn._base_components import DecoderRQM
+from scvi.nn._base_components import RQMDecoder
 from torch.distributions import kl_divergence as kl
 from torch.nn import functional as F
 from torch.nn.modules.module import T
@@ -73,7 +73,7 @@ class RQMDiva(TunedDIVA):
         )
 
         """reconstruction term p_theta(x|zd, zy) -> overwrite it with RQM compatible decoder"""
-        self.reconstruction_dxy_decoder = DecoderRQM(
+        self.reconstruction_dxy_decoder = RQMDecoder(
             n_input_y=n_latent_y,
             n_input_d=n_latent_d,
             n_output=n_input,  # output dim of decoder = original input dim

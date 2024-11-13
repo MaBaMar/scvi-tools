@@ -66,9 +66,9 @@ class ArchesMixin:
         freeze_dropout
             Whether to freeze dropout during training
         freeze_expression
-            Freeze neurons corersponding to expression in first layer
+            Freeze neurons corresponding to expression in first layer
         freeze_decoder_first_layer
-            Freeze neurons corersponding to first layer in decoder
+            Freeze neurons corresponding to first layer in decoder
         freeze_batchnorm_encoder
             Whether to freeze batchnorm weight and bias during training for encoder
         freeze_batchnorm_decoder
@@ -139,7 +139,7 @@ class ArchesMixin:
                 fixed_ten = torch.cat([load_ten, new_ten[..., -dim_diff:]], dim=-1)
                 load_state_dict[key] = fixed_ten
 
-        model.module.load_state_dict(load_state_dict)
+        model.module.load_state_dict(load_state_dict) # TODO: is this a bug!?!
         model.module.eval()
 
         _set_params_online_update(
@@ -289,10 +289,7 @@ def _set_params_online_update(
             and "decoder" in key
             and (not freeze_batchnorm_decoder)
         )
-        if one or two or three or four or five:
-            return True
-        else:
-            return False
+        return one or two or three or four or five
 
     for key, mod in module.named_modules():
         # skip over protected modules
@@ -312,10 +309,7 @@ def _set_params_online_update(
             mod.momentum = 0
 
     for key, par in module.named_parameters():
-        if requires_grad(key):
-            par.requires_grad = True
-        else:
-            par.requires_grad = False
+        par.requires_grad = requires_grad(key)
 
 
 def _get_loaded_data(reference_model, device=None):

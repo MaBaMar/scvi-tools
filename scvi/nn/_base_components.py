@@ -344,7 +344,7 @@ class MeanOnlyEncoder(nn.Module):
         # Parameters for latent distribution
         q = self.encoder(x, *cat_list)
         q_m = self.mean_encoder(q)
-        q_v = torch.ones_like(q_m)*self.var
+        q_v = torch.ones_like(q_m) * self.var
         dist = Normal(q_m, q_v.sqrt())
         latent = self.z_transformation(dist.rsample())
         if self.return_dist:
@@ -529,8 +529,9 @@ class LinearDecoderSCVI(nn.Module):
         return px_scale, px_r, px_rate, px_dropout
 
 
-class DecoderRQM(nn.Module):
+class RQMDecoder(nn.Module):
     """Decodes data from two different latent representations using three different decoders to support scARCHES"""
+
     def __init__(
         self,
         n_input_y: int,
@@ -548,7 +549,7 @@ class DecoderRQM(nn.Module):
         self.joined_decoder = DecoderSCVI(
             n_input=n_hidden,
             n_output=n_output,
-            n_layers=n_layers-1,
+            n_layers=n_layers - 1,
             n_hidden=n_hidden,
             use_batch_norm=use_batch_norm,
             use_layer_norm=use_layer_norm,

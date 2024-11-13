@@ -1,32 +1,23 @@
 import warnings
-from typing import Optional, Literal, Union, Sequence
+from typing import Literal, Union, Callable
 
-import numpy as np
 import torch
 from anndata import AnnData
-from lightning import LightningDataModule
-from scvi import REGISTRY_KEYS, settings
-from scvi._types import Tunable
-from scvi.data import AnnDataManager
+from scvi import settings, REGISTRY_KEYS
 from scvi.data._constants import _MODEL_NAME_KEY, _SETUP_ARGS_KEY, _SCVI_VERSION_KEY
-from scvi.data.fields import NumericalObsField, LayerField, CategoricalObsField
-from scvi.dataloaders._data_splitting import DefaultDataSplitter
-from scvi.model._utils import get_max_epochs_heuristic, use_distributed_sampler, parse_device_args
-from scvi.model.base import ArchesMixin, UnsupervisedTrainingMixin, RNASeqMixin, VAEMixin, BaseModelClass
-from scvi.model.base._archesmixin import _get_loaded_data, _set_params_online_update
+from scvi.model import SCDIVA
+from scvi.model._utils import parse_device_args
+from scvi.model.base import ArchesMixin, BaseModelClass
+from scvi.model.base._archesmixin import _get_loaded_data
 from scvi.model.base._utils import _validate_var_names, _initialize_model
-from scvi.module._diva_rqm import RQMDiva
-from scvi.utils import setup_anndata_dsp
+from scvi.nn._base_components import FCLayers
 from scvi.utils._docstrings import devices_dsp
 
 
-class ScDiVarQM(RNASeqMixin, VAEMixin, BaseModelClass, ArchesMixin, UnsupervisedTrainingMixin):
+class ScDiVarQM(SCDIVA, ArchesMixin):
     """
     Streamlined RQM implementation of scDIVA
     """
-    _module_cls = RQMDiva
-    _batch_key: Optional[str] = None
-    _clabel_key: Optional[str] = None
 
     def __init__(
         self,
@@ -38,301 +29,27 @@ class ScDiVarQM(RNASeqMixin, VAEMixin, BaseModelClass, ArchesMixin, Unsupervised
         gene_likelihood: Literal["zinb", "nb", "poisson"] = "zinb",
         latent_distribution: Literal["normal", "ln"] = "normal",
         use_default_data_splitter=False,
-        **kwargs):
-
-        super().__init__(adata)
-
-        n_labels = self.summary_stats.n_labels
-        n_batch = self.summary_stats.n_batch
-
-        self.init_params_ = self._get_init_params(locals())
-
-        self.module = self._module_cls(
-            n_input=self.summary_stats.n_vars,
-            n_batch=n_batch,
-            n_labels=n_labels,
-            n_latent_d=n_latent_d,
-            n_latent_y=n_latent_y,
-            dropout_rate=dropout_rate,
-            dispersion=dispersion,
-            gene_likelihood=gene_likelihood,
-            latent_distribution=latent_distribution,
-            **kwargs
-        )
-
-        self._module_kwargs = {
-            "n_latent_d": n_latent_d,
-            "n_latent_y": n_latent_y,
-            "dropout_rate": dropout_rate,
-            "dispersion": dispersion,
-            "gene_likelihood": gene_likelihood,
-            "latent_distribution": latent_distribution,
-            **kwargs
+        **kwargs
+    ):
+        number_query_batches = len(adata.obs[REGISTRY_KEYS.BATCH_KEY].cat.categories)
+        super_kwargs = {
+            "alpha_d": 0,  # deactivate the batch classifier
+            # "arches_batch_extension_size": number_query_batches  # TODO: implement
+            # TODO: add any other parameters here if required
         }
+        super().__init__(adata, n_latent_d, n_latent_y, dropout_rate, dispersion, gene_likelihood, latent_distribution,
+                         use_default_data_splitter,
+                         **self._filter_dict(kwargs, lambda x, _: x not in [super_kwargs.keys()]), **super_kwargs)
 
-        self._model_summary_string = (
-            "DiSCVI model with the following parameters: \n"
-            f"n_latent_d: {n_latent_d}, n_latent_y: {n_latent_y}, "
-            f"dropout_rate: {dropout_rate}, dispersion: {dispersion}, "
-            f"gene_likelihood: {gene_likelihood}, latent_distribution: {latent_distribution}, "
-        )
+        # todo: do extension of module with newly injected batch stuff for batch encoders to be able to perform scARCHES
+        # some code here!
+        # print(self.adata_manager.data_registry)
+        # print(self.adata_manager.registry)
+        # print(self.summary_stats.get("n_extra_continuous_covs", 0))
 
-        if use_default_data_splitter:
-            self._data_splitter_cls = DefaultDataSplitter
-
-    # TODO: continue here!!!!
-
-    @classmethod
-    @setup_anndata_dsp.dedent
-    def setup_anndata(
-        cls,
-        adata: AnnData,
-        layer: str | None = None,
-        batch_key: str | None = None,
-        labels_key: str | None = None,
-        size_factor_key: str | None = None,
-        **kwargs,
-    ):
-        """
-        <some doc string>
-        """
-        setup_method_args = cls._get_setup_method_args(**locals())
-        anndata_fields = [
-            LayerField(REGISTRY_KEYS.X_KEY, layer, is_count_data=True),
-            CategoricalObsField(REGISTRY_KEYS.BATCH_KEY, batch_key),
-            CategoricalObsField(REGISTRY_KEYS.LABELS_KEY, labels_key),
-            NumericalObsField(REGISTRY_KEYS.SIZE_FACTOR_KEY, size_factor_key, required=False)
-        ]
-
-        cls._batch_key = batch_key
-        cls._label_key = labels_key
-
-        adata_manager = AnnDataManager(fields=anndata_fields, setup_method_args=setup_method_args)
-        adata_manager.register_fields(adata, **kwargs)
-        cls.register_manager(adata_manager)
-
-    @torch.inference_mode()
-    def get_latent_representation(
-        self,
-        adata: Optional[AnnData] = None,
-        indices: Optional[Sequence[int]] = None,
-        give_mean: bool = True,
-        mc_samples: int = 5000,
-        batch_size: Optional[int] = None,
-        return_dist: bool = False,
-    ) -> Union[np.ndarray, tuple[np.ndarray, np.ndarray]]:
-        """Return the latent representation for each cell.
-
-                Specifically, returns [ :math:`z_d` , :math:`z_y` ].
-
-                Parameters
-                ----------
-                adata
-                    AnnData object with equivalent structure to initial AnnData. If `None`, defaults to the
-                    AnnData object used to initialize the model.
-                indices
-                    Indices of cells in adata to use. If `None`, all cells are used.
-                give_mean
-                    Give mean of distribution or sample from it.
-                mc_samples
-                    For distributions with no closed-form mean (e.g., `logistic normal`), how many Monte Carlo
-                    samples to take for computing mean.
-                batch_size
-                    Minibatch size for data loading into model. Defaults to `scvi.settings.batch_size`.
-                return_dist
-                    Return (mean, variance) of distributions instead of just the mean.
-                    If `True`, ignores `give_mean` and `mc_samples`. In the case of the latter,
-                    `mc_samples` is used to compute the mean of a transformed distribution.
-                    If `return_dist` is true the untransformed mean and variance are returned.
-
-                Returns
-                -------
-                Low-dimensional representation for each cell or a tuple containing its mean and variance.
-                """
-
-        self._check_if_trained(warn=False)
-
-        adata = self._validate_anndata(adata)
-        scdl = self._make_data_loader(adata=adata, indices=indices, batch_size=batch_size)
-
-        latent = []
-
-        if return_dist:
-            raise NotImplementedError
-
-        for tensors in scdl:
-            inference_inputs = self.module._get_inference_input(tensors)
-            outputs = self.module.inference(**inference_inputs)
-            q_zd_x = outputs["q_zd_x"]
-            q_zy_x = outputs["q_zy_x"]
-
-            if give_mean:
-                if self.module.latent_distribution == "ln":
-                    samples_zd_x = q_zd_x.sample([mc_samples])
-                    samples_zy_x = q_zy_x.sample([mc_samples])
-
-                    zd_x = torch.nn.functional.softmax(samples_zd_x, dim=-1)
-                    zd_x = zd_x.mean(dim=0)
-                    zy_x = torch.nn.functional.softmax(samples_zy_x, dim=-1)
-                    zy_x = zy_x.mean(dim=0)
-
-                else:
-                    zd_x = q_zd_x.loc
-                    zy_x = q_zy_x.loc
-            else:
-                zd_x = outputs["zd_x"]
-                zy_x = outputs["zy_x"]
-
-            cat_vecs = [zd_x.cpu(), zy_x.cpu()]
-            latent += [torch.cat(cat_vecs, dim=1)]
-
-        return torch.cat(latent).numpy()
-
-    def latent_separated(self, **kwargs):
-        """Returns [ :math:`z_d` , :math:`z_y` ]
-        Parameters
-        ----------
-        Returns
-        -------
-        """
-        latent = self.get_latent_representation(**kwargs)
-        n_d = self._module_kwargs["n_latent_d"]
-        return latent[:, :n_d], latent[:, n_d:]
-
-    def train(
-        self,
-        max_epochs: int | None = None,
-        accelerator: str = "auto",
-        devices: int | list[int] | str = "auto",
-        train_size: float = 0.9,
-        validation_size: float | None = None,
-        shuffle_set_split: bool = True,
-        load_sparse_tensor: bool = False,
-        batch_size: Tunable[int] = 128,
-        early_stopping: bool = False,
-        datasplitter_kwargs: dict | None = None,
-        plan_kwargs: dict | None = None,
-        data_module: LightningDataModule | None = None,
-        **trainer_kwargs,
-    ):
-        """Train the model.
-
-                Parameters
-                ----------
-                max_epochs
-                    The maximum number of epochs to train the model. The actual number of epochs may be
-                    less if early stopping is enabled. If ``None``, defaults to a heuristic based on
-                    :func:`~scvi.model.get_max_epochs_heuristic`. Must be passed in if ``data_module`` is
-                    passed in, and it does not have an ``n_obs`` attribute.
-                %(param_accelerator)s
-                %(param_devices)s
-                train_size
-                    Size of training set in the range ``[0.0, 1.0]``. Passed into
-                    :class:`~scvi.dataloaders.DataSplitter`. Not used if ``data_module`` is passed in.
-                validation_size
-                    Size of the test set. If ``None``, defaults to ``1 - train_size``. If
-                    ``train_size + validation_size < 1``, the remaining cells belong to a test set. Passed
-                    into :class:`~scvi.dataloaders.DataSplitter`. Not used if ``data_module`` is passed in.
-                shuffle_set_split
-                    Whether to shuffle indices before splitting. If ``False``, the val, train, and test set
-                    are split in the sequential order of the data according to ``validation_size`` and
-                    ``train_size`` percentages. Passed into :class:`~scvi.dataloaders.DataSplitter`. Not
-                    used if ``data_module`` is passed in.
-                load_sparse_tensor
-                    ``EXPERIMENTAL`` If ``True``, loads data with sparse CSR or CSC layout as a
-                    :class:`~torch.Tensor` with the same layout. Can lead to speedups in data transfers to
-                    GPUs, depending on the sparsity of the data. Passed into
-                    :class:`~scvi.dataloaders.DataSplitter`. Not used if ``data_module`` is passed in.
-                batch_size
-                    Minibatch size to use during training. Passed into
-                    :class:`~scvi.dataloaders.DataSplitter`. Not used if ``data_module`` is passed in.
-                early_stopping
-                    Perform early stopping. Additional arguments can be passed in through ``**kwargs``.
-                    See :class:`~scvi.train.Trainer` for further options.
-                datasplitter_kwargs
-                    Additional keyword arguments passed into :class:`~scvi.dataloaders.DataSplitter`. Values
-                    in this argument can be overwritten by arguments directly passed into this method, when
-                    appropriate. Not used if ``data_module`` is passed in.
-                plan_kwargs
-                    Additional keyword arguments passed into :class:`~scvi.train.TrainingPlan`. Values in
-                    this argument can be overwritten by arguments directly passed into this method, when
-                    appropriate.
-                data_module
-                    ``EXPERIMENTAL`` A :class:`~lightning.pytorch.core.LightningDataModule` instance to use
-                    for training in place of the default :class:`~scvi.dataloaders.DataSplitter`. Can only
-                    be passed in if the model was not initialized with :class:`~anndata.AnnData`.
-                **kwargs
-                   Additional keyword arguments passed into :class:`~scvi.train.Trainer`.
-                """
-        if data_module is not None and not self._module_init_on_train:
-            raise ValueError(
-                "Cannot pass in `data_module` if the model was initialized with `adata`."
-            )
-        elif data_module is None and self._module_init_on_train:
-            raise ValueError(
-                "If the model was not initialized with `adata`, a `data_module` must be passed in."
-            )
-
-        if max_epochs is None:
-            if data_module is None:
-                max_epochs = get_max_epochs_heuristic(self.adata.n_obs)
-            elif hasattr(data_module, "n_obs"):
-                max_epochs = get_max_epochs_heuristic(data_module.n_obs)
-            else:
-                raise ValueError(
-                    "If `data_module` does not have `n_obs` attribute, `max_epochs` must be passed "
-                    "in."
-                )
-
-        if data_module is None:
-            datasplitter_kwargs = datasplitter_kwargs or {}
-            data_module = self._data_splitter_cls(
-                self.adata_manager,
-                train_size=train_size,
-                validation_size=validation_size,
-                batch_size=batch_size,
-                shuffle_set_split=shuffle_set_split,
-                distributed_sampler=use_distributed_sampler(trainer_kwargs.get("strategy", None)),
-                load_sparse_tensor=load_sparse_tensor,
-                **datasplitter_kwargs,
-            )
-        elif self.module is None:
-            self.module = self._module_cls(
-                data_module.n_vars,
-                n_batch=data_module.n_batch,
-                n_labels=getattr(data_module, "n_labels", 1),
-                n_continuous_cov=getattr(data_module, "n_continuous_cov", 0),
-                n_cats_per_cov=getattr(data_module, "n_cats_per_cov", None),
-                **self._module_kwargs,
-            )
-
-        plan_kwargs = plan_kwargs or {}
-        if 'n_epochs_kl_warmup' not in plan_kwargs:
-            plan_kwargs['n_epochs_kl_warmup'] = min(400, max_epochs)
-
-        if 'n_epochs_warmup' not in plan_kwargs:
-            plan_kwargs['n_epochs_ce_warmup'] = max_epochs
-
-        training_plan = self._training_plan_cls(self.module, **plan_kwargs, n_classes=self.module.n_labels)
-
-        es = "early_stopping"
-        trainer_kwargs[es] = (
-            early_stopping if es not in trainer_kwargs.keys() else trainer_kwargs[es]
-        )
-        runner = self._train_runner_cls(
-            self,
-            training_plan=training_plan,
-            data_splitter=data_module,
-            max_epochs=max_epochs,
-            accelerator=accelerator,
-            devices=devices,
-            **trainer_kwargs,
-        )
-        data_module.setup()
-
-        self.module.init_ce_weight_y(self.adata, data_module.train_idx, self._label_key)
-        self.module.init_kl_weights(self.adata, data_module.train_idx, self._label_key, self._batch_key)
-        return runner()
+    @staticmethod
+    def _filter_dict(filterable: dict, f: Callable[[any, any], bool]) -> dict:
+        return {x: y for x, y in filterable.items() if f(x, y)}
 
     @classmethod
     @devices_dsp.dedent
@@ -364,9 +81,8 @@ class ScDiVarQM(RNASeqMixin, VAEMixin, BaseModelClass, ArchesMixin, Unsupervised
         _validate_var_names(adata, var_names)
 
         registry = attr_dict.pop("registry_")
-        print(registry[_MODEL_NAME_KEY])
         if _MODEL_NAME_KEY in registry and registry[_MODEL_NAME_KEY] not in [cls.__name__, "SCDIVA"]:
-            raise ValueError("It appears you are loading a model from a different class.")
+            raise ValueError("It appears you are loading a model from an unsupported class.")
 
         if _SETUP_ARGS_KEY not in registry:
             raise ValueError(
@@ -381,7 +97,6 @@ class ScDiVarQM(RNASeqMixin, VAEMixin, BaseModelClass, ArchesMixin, Unsupervised
             allow_missing_labels=True,
             **registry[_SETUP_ARGS_KEY]
         )
-        print(attr_dict)
         model = _initialize_model(cls, adata, attr_dict)
         adata_manager = model.get_anndata_manager(adata, required=True)
         version_split = adata_manager.registry[_SCVI_VERSION_KEY].split(".")
@@ -396,33 +111,101 @@ class ScDiVarQM(RNASeqMixin, VAEMixin, BaseModelClass, ArchesMixin, Unsupervised
         model.to_device(device)
 
         # model tweaking
-        new_state_dict = model.module.state_dict()
-        print(new_state_dict.keys())
+        new_state_dict: dict = model.module.state_dict()
+        allowed_keys = new_state_dict.keys()
 
         # we disable the classifiers
+        load_target = {}
         for key, load_ten in load_state_dict.items():
+            if not key in allowed_keys:
+                continue
             new_ten = new_state_dict[key]
             if new_ten.size() == load_ten.size():
+                print(f"not changed:\t{key}")  # TODO: remove print statement
+                load_target[key] = load_ten
                 continue
-            # new categoricals changed size
             else:
+                print(f"changed:\t{key}")  # TODO: remove print statement
                 dim_diff = new_ten.size()[-1] - load_ten.size()[-1]
                 fixed_ten = torch.cat([load_ten, new_ten[..., -dim_diff:]], dim=-1)
-                load_state_dict[key] = fixed_ten
+                load_target[key] = fixed_ten
 
-        model.module.load_state_dict(load_state_dict)
+        model.module.load_state_dict(load_target)
         model.module.eval()
 
         _set_params_online_update(
             model.module,
             unfrozen=unfrozen,
-            freeze_decoder_first_layer=freeze_decoder_first_layer,
             freeze_batchnorm_encoder=freeze_batchnorm_encoder,
             freeze_batchnorm_decoder=freeze_batchnorm_decoder,
             freeze_dropout=freeze_dropout,
-            freeze_expression=freeze_expression,
-            freeze_classifier=freeze_classifier,
         )
         model.is_trained_ = False
-
         return model
+
+
+def _set_params_online_update(
+    module,
+    unfrozen,
+    freeze_batchnorm_encoder,
+    freeze_batchnorm_decoder,
+    freeze_dropout,
+):
+    print(60 * "=")
+    print()
+    """Freeze parts of network for scArches."""
+    # do nothing if unfrozen
+    if unfrozen:
+        return
+
+    mod_no_grad = {"prior_zy_y_encoder", "aux_y_zy_enc", "celltype_predecoder", "joined_decoder"}
+    mod_no_hooks_yes_grad = {"l_encoder", "batch_predecoder", "posterior_zy_x_encoder", "posterior_zd_x_encoder"}
+    no_hooks = mod_no_grad.union(mod_no_hooks_yes_grad)
+
+    # those modules don't get gradient hooks
+    def no_hook_cond(key):
+        return key.split(".")[0] in no_hooks or key.split(".")[1] in no_hooks
+
+    def requires_grad(key):
+        mod_name = key.split(".")[0]
+        # set decoder layer that needs grad
+        if "reconstruction" in mod_name:
+            mod_name = key.split(".")[1]
+        first_layer_of_grad_mod = "fc_layers" in key and ".0." in key and mod_name not in mod_no_grad
+        # modules that need grad
+        mod_force_grad = mod_name in mod_no_hooks_yes_grad
+        is_non_frozen_batchnorm = (
+                                      "fc_layers" in key
+                                      and ".1." in key
+                                      and "encoder" in key
+                                      and (not freeze_batchnorm_encoder)
+                                  ) or (
+                                      "fc_layers" in key
+                                      and ".1." in key
+                                      and "decoder" in key
+                                      and (not freeze_batchnorm_decoder)
+                                  )
+
+        return first_layer_of_grad_mod | mod_force_grad | is_non_frozen_batchnorm
+
+    for key, mod in module.named_modules():
+        # skip protected modules
+        if key.split(".")[0] in mod_no_hooks_yes_grad:
+            continue
+        if isinstance(mod, FCLayers):
+            mod.set_online_update_hooks(not no_hook_cond(key))
+            if not no_hook_cond(key):
+                print("Hooked:", key)
+        if isinstance(mod, torch.nn.Dropout):
+            if freeze_dropout:
+                mod.p = 0
+        # momentum freezes the running stats of batchnorm
+        freeze_batchnorm = ("decoder" in key and freeze_batchnorm) or (
+            "encoder" in key and freeze_batchnorm
+        )
+        if isinstance(mod, torch.nn.BatchNorm1d) and freeze_batchnorm:
+            mod.momentum = 0
+
+    for key, par in module.named_parameters():
+        par.requires_grad = requires_grad(key)
+        print(key, par.requires_grad)
