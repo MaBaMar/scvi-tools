@@ -1,12 +1,15 @@
 """streamlined DIVA implementation for RQM wrapping"""
 from __future__ import annotations
 
+import numpy as np
 import torch
+from anndata import AnnData
 from scvi import REGISTRY_KEYS
 from scvi.distributions import ZeroInflatedNegativeBinomial, NegativeBinomial, Poisson
 from scvi.module._diva import DIVA
 from scvi.module.base import LossOutput, auto_move_data
 from scvi.nn import one_hot
+from sklearn.utils import compute_class_weight
 from torch.distributions import kl_divergence as kl
 
 
@@ -126,8 +129,7 @@ class RQMDiva(DIVA):
             inference_outputs['zy_x'])).sum(-1).view(-1, 1)
 
         # KL loss
-        kl_local_for_warmup = (self.beta_d * kl_zd * self._kl_weights_d.to(self.device)[d]
-                               + self.beta_y * kl_zy * self._kl_weights_y.to(self.device)[y])
+        kl_local_for_warmup = self.beta_d * kl_zd + self.beta_y * kl_zy
 
         weighted_kl_local = kl_weight * kl_local_for_warmup
 

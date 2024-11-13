@@ -45,16 +45,13 @@ class ScDiVarQM(SCDIVA, ArchesMixin):
 
         # todo: do extension of module with newly injected batch stuff for batch encoders to be able to perform scARCHES
         # some code here!
-        # print(self.adata_manager.data_registry)
-        # print(self.adata_manager.registry)
-        # print(self.summary_stats.get("n_extra_continuous_covs", 0))
 
     @staticmethod
     def _filter_dict(filterable: dict, f: Callable[[any, any], bool]) -> dict:
         return {x: y for x, y in filterable.items() if f(x, y)}
 
     def train(self, *args, **kwargs):
-        super().train(*args, **kwargs, init_weights=False)
+        super().train(*args, **kwargs, init_cls_weights=False)
 
     @classmethod
     @devices_dsp.dedent
@@ -126,11 +123,11 @@ class ScDiVarQM(SCDIVA, ArchesMixin):
                 continue
             new_ten = new_state_dict[key]
             if new_ten.size() == load_ten.size():
-                print(f"not changed:\t{key}")  # TODO: remove print statement
+                # print(f"not changed:\t{key}")  # TODO: remove print statement
                 load_target[key] = load_ten
                 continue
             else:
-                print(f"changed:\t{key}")  # TODO: remove print statement
+                # print(f"changed:\t{key}")  # TODO: remove print statement
                 dim_diff = new_ten.size()[-1] - load_ten.size()[-1]
                 fixed_ten = torch.cat([load_ten, new_ten[..., -dim_diff:]], dim=-1)
                 load_target[key] = fixed_ten
@@ -156,8 +153,8 @@ def _set_params_online_update(
     freeze_batchnorm_decoder,
     freeze_dropout,
 ):
-    print(60 * "=")
-    print()
+    # print(60 * "=")
+    # print()
     """Freeze parts of network for scArches."""
     # do nothing if unfrozen
     if unfrozen:
@@ -199,8 +196,8 @@ def _set_params_online_update(
             continue
         if isinstance(mod, FCLayers):
             mod.set_online_update_hooks(not no_hook_cond(key))
-            if not no_hook_cond(key):
-                print("Hooked:", key)
+            # if not no_hook_cond(key):
+                # print("Hooked:", key)
         if isinstance(mod, torch.nn.Dropout):
             if freeze_dropout:
                 mod.p = 0
@@ -213,4 +210,4 @@ def _set_params_online_update(
 
     for key, par in module.named_parameters():
         par.requires_grad = requires_grad(key)
-        print(key, par.requires_grad)
+        # print(key, par.requires_grad)
