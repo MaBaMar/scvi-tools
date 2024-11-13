@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import torch
+from model import SCDIVA
 from scvi import REGISTRY_KEYS
 from scvi.distributions import ZeroInflatedNegativeBinomial, NegativeBinomial, Poisson
 from scvi.module._diva import DIVA
@@ -9,6 +10,7 @@ from scvi.module.base import LossOutput, auto_move_data
 from scvi.nn import one_hot
 from torch.distributions import kl_divergence as kl
 from torch.nn import functional as F
+from torch.nn.modules.module import T
 
 
 class RQMDiva(DIVA):
@@ -92,7 +94,6 @@ class RQMDiva(DIVA):
             )
 
         # priors
-        d_hat = self.aux_d_zd_enc(zd_x)
         y_hat = self.aux_y_zy_enc(zy_x)
 
         y = torch.argmax(y_hat.clone(), dim=1).view(-1, 1)
@@ -100,7 +101,7 @@ class RQMDiva(DIVA):
         p_zd_d, _ = self.prior_zd_d_encoder(one_hot(d, self.n_batch))
         p_zy_y, _ = self.prior_zy_y_encoder(one_hot(y, self.n_labels))
 
-        return {'px_recon': px_recon, 'd_hat': d_hat, 'y_hat': y_hat, 'p_zd_d': p_zd_d, 'p_zy_y': p_zy_y}
+        return {'px_recon': px_recon, 'y_hat': y_hat, 'p_zd_d': p_zd_d, 'p_zy_y': p_zy_y}
 
     def loss(
         self,

@@ -20,6 +20,7 @@ class ScDiVarQM(SCDIVA, ArchesMixin):
     Streamlined RQM implementation of scDIVA
     """
     _module_cls = RQMDiva
+
     def __init__(
         self,
         adata: AnnData | None = None,
@@ -51,6 +52,9 @@ class ScDiVarQM(SCDIVA, ArchesMixin):
     @staticmethod
     def _filter_dict(filterable: dict, f: Callable[[any, any], bool]) -> dict:
         return {x: y for x, y in filterable.items() if f(x, y)}
+
+    def train(self, *args, **kwargs):
+        super().train(*args, **kwargs, init_weights=False)
 
     @classmethod
     @devices_dsp.dedent

@@ -270,6 +270,7 @@ class SCDIVA(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         datasplitter_kwargs: dict | None = None,
         plan_kwargs: dict | None = None,
         data_module: LightningDataModule | None = None,
+        init_weights: bool = True,
         **trainer_kwargs,
     ):
         """Train the model.
@@ -387,8 +388,9 @@ class SCDIVA(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         )
         data_module.setup()
 
-        self.module.init_ce_weight_y(self.adata, data_module.train_idx, self._label_key)
-        self.module.init_kl_weights(self.adata, data_module.train_idx, self._label_key, self._batch_key)
+        if init_weights:
+            self.module.init_ce_weight_y(self.adata, data_module.train_idx, self._label_key)
+            self.module.init_kl_weights(self.adata, data_module.train_idx, self._label_key, self._batch_key)
         return runner()
 
     def _validate_anndata(
