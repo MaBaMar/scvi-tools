@@ -10,7 +10,8 @@ from scvi.module._diva import DIVA
 from scvi.module.base import LossOutput, auto_move_data
 from scvi.nn import one_hot
 from sklearn.utils import compute_class_weight
-from torch.distributions import kl_divergence as kl
+from torch import softmax
+from torch.distributions import kl_divergence as kl, OneHotCategorical
 
 
 class RQMDiva(DIVA):
@@ -114,8 +115,6 @@ class RQMDiva(DIVA):
     ) -> LossOutput:
 
         x = tensors[REGISTRY_KEYS.X_KEY]
-        y = tensors[REGISTRY_KEYS.LABELS_KEY]
-        d = tensors[REGISTRY_KEYS.BATCH_KEY]
 
         # avoid repeating the indexing process
         neg_reconstruction_loss = -generative_outputs["px_recon"].log_prob(x).sum(-1)

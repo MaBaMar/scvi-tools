@@ -4,7 +4,10 @@ from typing import Literal, Union, Callable
 import torch
 from anndata import AnnData
 from scvi import settings, REGISTRY_KEYS
+from scvi.data import AnnDataManager
 from scvi.data._constants import _MODEL_NAME_KEY, _SETUP_ARGS_KEY, _SCVI_VERSION_KEY
+from scvi.data.fields import LayerField, CategoricalObsField, LabelsWithUnlabeledObsField
+from scvi.data.fields import NumericalObsField
 from scvi.model import SCDIVA
 from scvi.model._utils import parse_device_args
 from scvi.model.base import ArchesMixin, BaseModelClass
@@ -38,9 +41,10 @@ class ScDiVarQM(SCDIVA, ArchesMixin):
             # "arches_batch_extension_size": number_query_batches  # TODO: implement
             # TODO: add any other parameters here if required
         }
+        skwarg_keys = super_kwargs.keys()
         super().__init__(adata, n_latent_d, n_latent_y, dropout_rate, dispersion, gene_likelihood, latent_distribution,
                          use_default_data_splitter,
-                         **self._filter_dict(kwargs, lambda x, _: x not in [super_kwargs.keys()]), **super_kwargs)
+                         **self._filter_dict(kwargs, lambda x, _: x not in skwarg_keys), **super_kwargs)
 
         # todo: do extension of module with newly injected batch stuff for batch encoders to be able to perform scARCHES
         # some code here!
@@ -68,6 +72,7 @@ class ScDiVarQM(SCDIVA, ArchesMixin):
         freeze_batchnorm_encoder: bool = True,
         freeze_batchnorm_decoder: bool = False,
         freeze_classifier: bool = True,
+        unlabeled_category: str = "unknown"
     ):
         """TODO: some_doc_string    """
         _, _, device = parse_device_args(
@@ -98,7 +103,7 @@ class ScDiVarQM(SCDIVA, ArchesMixin):
             allow_missing_labels=True,
             **registry[_SETUP_ARGS_KEY]
         )
-        model = _initialize_model(cls, adata, attr_dict)
+        model: ScDiVarQM = _initialize_model(cls, adata, attr_dict)
         adata_manager = model.get_anndata_manager(adata, required=True)
         version_split = adata_manager.registry[_SCVI_VERSION_KEY].split(".")
         if int(version_split[1]) < 8 and int(version_split[0]) == 0:
@@ -127,6 +132,8 @@ class ScDiVarQM(SCDIVA, ArchesMixin):
                 continue
             else:
                 # print(f"changed:\t{key}")  # TODO: remove print statement
+                print(model.module.n_labels, reference_model.module.n_labels)
+                print(new_ten.size(), load_ten.size())
                 dim_diff = new_ten.size()[-1] - load_ten.size()[-1]
                 fixed_ten = torch.cat([load_ten, new_ten[..., -dim_diff:]], dim=-1)
                 load_target[key] = fixed_ten
@@ -196,7 +203,7 @@ def _set_params_online_update(
         if isinstance(mod, FCLayers):
             mod.set_online_update_hooks(not no_hook_cond(key))
             # if not no_hook_cond(key):
-                # print("Hooked:", key)
+            # print("Hooked:", key)
         if isinstance(mod, torch.nn.Dropout):
             if freeze_dropout:
                 mod.p = 0
