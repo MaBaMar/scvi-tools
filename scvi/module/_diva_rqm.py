@@ -128,9 +128,12 @@ class RQMDiva(DIVA):
         self.train()
         return probs.argmax(dim=0).view(-1, 1)
 
+    @torch.inference_mode()
     def _pred_hook_cls_base(self, zy_x):
+        self.eval()
         y_hat = self.aux_y_zy_enc(zy_x)
-        return torch.argmax(y_hat.clone(), dim=0).view(-1, 1)
+        self.train()
+        return torch.argmax(y_hat.clone(), dim=1).view(-1, 1)
 
     def loss(
         self,
