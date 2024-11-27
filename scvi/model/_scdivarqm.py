@@ -45,7 +45,6 @@ class ScDiVarQM(SCDIVA, ArchesMixin):
         super().__init__(adata, n_latent_d, n_latent_y, dropout_rate, dispersion, gene_likelihood, latent_distribution,
                          use_default_data_splitter,
                          **self._filter_dict(kwargs, lambda x, _: x not in skwarg_keys), **super_kwargs)
-
         # todo: do extension of module with newly injected batch stuff for batch encoders to be able to perform scARCHES
         # some code here!
 
@@ -62,6 +61,7 @@ class ScDiVarQM(SCDIVA, ArchesMixin):
         cls,
         adata: AnnData,
         reference_model: Union[str, BaseModelClass],
+        pred_type: Literal['prior_based', 'internal_classifier'],
         inplace_subset_query_vars: bool = False,
         accelerator: str = "auto",
         device: Union[int, str] = "auto",
@@ -83,6 +83,7 @@ class ScDiVarQM(SCDIVA, ArchesMixin):
         )
 
         attr_dict, var_names, load_state_dict = _get_loaded_data(reference_model, device=device)
+        attr_dict["init_params_"]['kwargs']['kwargs']['pred_type'] = pred_type
 
         _validate_var_names(adata, var_names)
 
@@ -132,8 +133,8 @@ class ScDiVarQM(SCDIVA, ArchesMixin):
                 continue
             else:
                 # print(f"changed:\t{key}")  # TODO: remove print statement
-                print(model.module.n_labels, reference_model.module.n_labels)
-                print(new_ten.size(), load_ten.size())
+                # print(model.module.n_labels, reference_model.module.n_labels)
+                # print(new_ten.size(), load_ten.size())
                 dim_diff = new_ten.size()[-1] - load_ten.size()[-1]
                 fixed_ten = torch.cat([load_ten, new_ten[..., -dim_diff:]], dim=-1)
                 load_target[key] = fixed_ten

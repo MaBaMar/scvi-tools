@@ -1,23 +1,34 @@
 """streamlined DIVA implementation for RQM wrapping"""
 from __future__ import annotations
 
-import numpy as np
+import logging
+from typing import Literal, Callable
+
 import torch
-from anndata import AnnData
 from scvi import REGISTRY_KEYS
 from scvi.distributions import ZeroInflatedNegativeBinomial, NegativeBinomial, Poisson
 from scvi.module._diva import DIVA
 from scvi.module.base import LossOutput, auto_move_data
 from scvi.nn import one_hot
-from sklearn.utils import compute_class_weight
-from torch import softmax
-from torch.distributions import kl_divergence as kl, OneHotCategorical
+from torch.distributions import kl_divergence as kl, OneHotCategorical, Independent
 
+logger = logging.getLogger(__name__)
 
 class RQMDiva(DIVA):
 
-    def __init__(self, *args, **kwargs):
+    _pred_func: Callable[[torch.Tensor], torch.Tensor]
+
+    def __init__(self, *args, pred_type: Literal['prior_based', 'internal_classifier'], **kwargs):
         super().__init__(*args, **kwargs)
+        logger.info(f"[RQMDiva] using pred_type: {pred_type}")
+        match pred_type:
+            case 'prior_based':
+                self._pred_func = self._pred_hook_prior_base
+            case 'internal_classifier':
+                self._pred_func = self._pred_hook_cls_base
+            case _:
+                raise ValueError(f'Invalid pred_type {pred_type}')
+
 
     def _get_inference_input(self, tensors: dict[str, torch.Tensor], **kwargs):
         return {'x': tensors[REGISTRY_KEYS.X_KEY], 'd': tensors[REGISTRY_KEYS.BATCH_KEY]}
@@ -94,15 +105,32 @@ class RQMDiva(DIVA):
                 f"gene_likelihood must be one of ['zinb', 'nb','poisson'], but input was {self.gene_likelihood}"
             )
 
-        # priors
-        y_hat = self.aux_y_zy_enc(zy_x)
-
-        y = torch.argmax(y_hat.clone(), dim=1).view(-1, 1)
+        # y_hat = self.aux_y_zy_enc(zy_x)
+        #
+        # y = torch.argmax(y_hat.clone(), dim=1).view(-1, 1)
+        y = self._pred_func(zy_x)
 
         p_zd_d, _ = self.prior_zd_d_encoder(one_hot(d, self.n_batch))
         p_zy_y, _ = self.prior_zy_y_encoder(one_hot(y, self.n_labels))
 
-        return {'px_recon': px_recon, 'y_hat': y_hat, 'p_zd_d': p_zd_d, 'p_zy_y': p_zy_y}
+        return {'px_recon': px_recon, 'p_zd_d': p_zd_d, 'p_zy_y': p_zy_y}
+
+    @torch.inference_mode()
+    def _pred_hook_prior_base(self, zy_x):
+        self.eval()
+        encodings = torch.eye(self.n_labels, device=self.device)
+        probs = torch.zeros((self.n_labels, zy_x.shape[0]), device=self.device)
+        for idx in range(self.n_labels):
+            p_zy_y: torch.distributions.Normal
+            p_zy_y, _ = self.prior_zy_y_encoder(encodings[idx:idx + 1, :])
+            ind = Independent(p_zy_y, 1)
+            probs[idx, :] = ind.expand([zy_x.shape[0]]).log_prob(zy_x)
+        self.train()
+        return probs.argmax(dim=0).view(-1, 1)
+
+    def _pred_hook_cls_base(self, zy_x):
+        y_hat = self.aux_y_zy_enc(zy_x)
+        return torch.argmax(y_hat.clone(), dim=0).view(-1, 1)
 
     def loss(
         self,
