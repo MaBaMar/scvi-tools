@@ -105,9 +105,6 @@ class RQMDiva(DIVA):
                 f"gene_likelihood must be one of ['zinb', 'nb','poisson'], but input was {self.gene_likelihood}"
             )
 
-        # y_hat = self.aux_y_zy_enc(zy_x)
-        #
-        # y = torch.argmax(y_hat.clone(), dim=1).view(-1, 1)
         y = self._pred_func(zy_x)
 
         p_zd_d, _ = self.prior_zd_d_encoder(one_hot(d, self.n_batch))
@@ -126,7 +123,9 @@ class RQMDiva(DIVA):
             ind = Independent(p_zy_y, 1)
             probs[idx, :] = ind.expand([zy_x.shape[0]]).log_prob(zy_x)
         self.train()
-        return probs.argmax(dim=0).view(-1, 1)
+        dist = torch.distributions.Categorical(probs=torch.softmax(probs, dim=0).T)
+        return dist.sample().view(-1, 1)
+        # return probs.argmax(dim=0).view(-1, 1)
 
     @torch.inference_mode()
     def _pred_hook_cls_base(self, zy_x):
