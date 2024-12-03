@@ -114,6 +114,16 @@ class RQMDiva(DIVA):
 
     @torch.inference_mode()
     def _pred_hook_prior_base(self, zy_x):
+        """
+
+        Parameters
+        ----------
+        zy_x
+
+        Returns
+        -------
+        Distribution q_y__zy_x of the generated labels
+        """
         self.eval()
         encodings = torch.eye(self.n_labels, device=self.device)
         probs = torch.zeros((self.n_labels, zy_x.shape[0]), device=self.device)
@@ -154,6 +164,8 @@ class RQMDiva(DIVA):
             inference_outputs['q_zd_x'],
             generative_outputs['p_zd_d'],
         ).sum(dim=1)
+
+        # prob_y =
         kl_zy = (inference_outputs['q_zy_x'].log_prob(inference_outputs['zy_x']) - generative_outputs['p_zy_y'].log_prob(
             inference_outputs['zy_x'])).sum(-1).view(-1, 1)
 

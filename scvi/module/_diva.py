@@ -1,6 +1,7 @@
 """DIVA implementation supervised"""
 from __future__ import annotations
 
+import logging
 import sys
 import warnings
 from typing import Literal, Optional
@@ -19,6 +20,7 @@ from sklearn.utils.class_weight import compute_class_weight
 from torch import nn
 from torch.distributions import Normal, kl_divergence as kl, MixtureSameFamily, Independent, Categorical
 
+logger = logging.Logger(__name__)
 
 # TODO: support minification
 class DIVA(BaseModuleClass):
@@ -51,7 +53,6 @@ class DIVA(BaseModuleClass):
         dropout_rate: float = 0.1,
         lib_encoder_n_hidden: int = 128,
         lib_encoder_n_layers: int = 1,
-        # arches_batch_extension_size: int = 0,
         dispersion: Literal["gene", "gene-batch", "gene-label", "gene-cell"] = "gene",
         log_variational: Tunable[bool] = True,
         gene_likelihood: Literal["zinb", "nb", "poisson"] = "zinb",
@@ -224,6 +225,9 @@ class DIVA(BaseModuleClass):
         # speed up the model
         self._use_batch_classifier = alpha_d != 0
         self._use_celltype_classifier = alpha_y != 0 and not self._unsupervised
+
+        logger.info(f"Using batch classifier:  {self._use_batch_classifier}")
+        logger.info(f"Using celltype classifier:  {self._use_celltype_classifier}")
 
         self.use_learnable_priors = use_learnable_priors
 
