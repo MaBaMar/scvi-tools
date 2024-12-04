@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 class RQMDiva(DIVA):
 
-    _pred_func: Callable[[torch.Tensor], torch.Tensor]
+    _pred_func: Callable[[torch.Tensor], torch.distributions.Categorical]
 
     def __init__(self, *args, pred_type: Literal['prior_based', 'internal_classifier'], **kwargs):
         super().__init__(*args, **kwargs)
@@ -105,15 +105,16 @@ class RQMDiva(DIVA):
                 f"gene_likelihood must be one of ['zinb', 'nb','poisson'], but input was {self.gene_likelihood}"
             )
 
-        y = self._pred_func(zy_x)
+        p_y_zy = self._pred_func(zy_x)
+        y = p_y_zy.sample().view(-1,1)
 
         p_zd_d, _ = self.prior_zd_d_encoder(one_hot(d, self.n_batch))
         p_zy_y, _ = self.prior_zy_y_encoder(one_hot(y, self.n_labels))
 
-        return {'px_recon': px_recon, 'p_zd_d': p_zd_d, 'p_zy_y': p_zy_y}
+        return {'px_recon': px_recon, 'p_zd_d': p_zd_d, 'p_zy_y': p_zy_y, 'p_y_zy': p_y_zy, 'y_pred': y}
 
     @torch.inference_mode()
-    def _pred_hook_prior_base(self, zy_x):
+    def _pred_hook_prior_base(self, zy_x: torch.Tensor) -> torch.distributions.Categorical:
         """
 
         Parameters
@@ -134,15 +135,15 @@ class RQMDiva(DIVA):
             probs[idx, :] = ind.expand([zy_x.shape[0]]).log_prob(zy_x)
         self.train()
         dist = torch.distributions.Categorical(probs=torch.softmax(probs, dim=0).T)
-        return dist.sample().view(-1, 1)
-        # return probs.argmax(dim=0).view(-1, 1)
+        return dist
 
     @torch.inference_mode()
-    def _pred_hook_cls_base(self, zy_x):
+    def _pred_hook_cls_base(self, zy_x: torch.Tensor) -> torch.distributions.Categorical:
         self.eval()
-        y_hat = self.aux_y_zy_enc(zy_x)
+        probs = self.aux_y_zy_enc(zy_x)
         self.train()
-        return torch.argmax(y_hat.clone(), dim=1).view(-1, 1)
+        dist = torch.distributions.Categorical(probs=torch.softmax(probs, dim=-1))
+        return dist
 
     def loss(
         self,
@@ -165,8 +166,12 @@ class RQMDiva(DIVA):
             generative_outputs['p_zd_d'],
         ).sum(dim=1)
 
-        # prob_y =
-        kl_zy = (inference_outputs['q_zy_x'].log_prob(inference_outputs['zy_x']) - generative_outputs['p_zy_y'].log_prob(
+        p_y_zy = generative_outputs['p_y_zy']
+        y_pred = generative_outputs['y_pred']
+
+        marginal_weight = torch.exp(p_y_zy.log_prob(y_pred.reshape(y_pred.shape[0],))).view(-1,1)
+
+        kl_zy = marginal_weight * (inference_outputs['q_zy_x'].log_prob(inference_outputs['zy_x']) - generative_outputs['p_zy_y'].log_prob(
             inference_outputs['zy_x'])).sum(-1).view(-1, 1)
 
         # KL loss
