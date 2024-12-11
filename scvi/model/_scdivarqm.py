@@ -61,7 +61,7 @@ class ScDiVarQM(SCDIVA, ArchesMixin):
         cls,
         adata: AnnData,
         reference_model: Union[str, BaseModelClass],
-        pred_type: Literal['prior_based', 'internal_classifier'],
+        pred_type: Literal['prior_based', 'internal_classifier'] = 'internal_classifier',
         inplace_subset_query_vars: bool = False,
         accelerator: str = "auto",
         device: Union[int, str] = "auto",
