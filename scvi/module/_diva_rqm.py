@@ -155,6 +155,9 @@ class RQMDiva(DIVA):
         **kwargs
     ) -> LossOutput:
 
+        # IMPORTANT NOTE: we deactivated kl_scaling here
+        kl_weight = 1
+
         x = tensors[REGISTRY_KEYS.X_KEY]
 
         # avoid repeating the indexing process
