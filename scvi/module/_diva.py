@@ -683,15 +683,31 @@ class DIVA(BaseModuleClass):
         raise ValueError("unsupported mode")
 
     def init_ce_weight_y(self, adata: AnnData, indices, label_key: str):
-        # BEWARE!!! Validation loss will use training weighting for CE!
-        """Does not work if train split does not contain all celltypes"""
-        # print(cat_d.min(),cat_d.max())
-        # print(np.array(range(self.n_batch)))
+        """
+        Initializes the cross entropy weights for the training process. All data occuring in the training set will be weighted accordingly.
+        Data not present in the proviced adata will be ignored. Also, the adata object may not include any unlabeled samples as the reference
+        building process is purely supervised.
+        # BEWARE!!! Validation loss will currently use training weighting for CE!
+        :param adata: The training adata to fit to
+        :param indices: If the adata contains more than just the training samples, these indices should be used to indicate which samples should be used
+        :param label_key: The label key
+        :return:
+        """
         cat_y = adata.obs[label_key].cat.codes[indices]
-        self._ce_weights_y = torch.tensor(compute_class_weight('balanced', classes=np.array(range(self.n_labels)), y=cat_y),
-                                          dtype=torch.float)
+        data_index_space = np.unique(cat_y)
+        model_index_space = np.array(range(self.n_labels))
+
+        if len(t:=np.setdiff1d(data_index_space, model_index_space)) > 0:
+            raise ValueError('Data contains classes with indices {}. Those are not supported by the used model instance. Make sure you only'
+                             'use data that was set up for the model instance.'.format(t))
+
+        weight_arr = np.zeros(self.n_labels)
+        weight_arr[data_index_space] = compute_class_weight('balanced', classes=data_index_space, y=cat_y)
+
+        self._ce_weights_y = torch.tensor(weight_arr, device=self.device, dtype=torch.float)
 
     def init_kl_weights(self, adata: AnnData, indices, label_key: str, batch_key: str):
+        # TODO: needs some rework!
         cat_y = adata.obs[label_key].cat.codes[indices]
         cat_d = adata.obs[batch_key].cat.codes[indices]
 

@@ -217,4 +217,3 @@ def _set_params_online_update(
 
     for key, par in module.named_parameters():
         par.requires_grad = requires_grad(key)
-        # print(key, par.requires_grad)

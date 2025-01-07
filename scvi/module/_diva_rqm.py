@@ -172,6 +172,8 @@ class RQMDiva(DIVA):
         p_y_zy = generative_outputs['p_y_zy']
         y_pred = generative_outputs['y_pred']
 
+        # TODO: maybe introduce weighting process for loss proportional to predicted pseudolabels?!?
+
         marginal_weight = torch.exp(p_y_zy.log_prob(y_pred.reshape(y_pred.shape[0],))).view(-1,1)
 
         kl_zy = marginal_weight * (inference_outputs['q_zy_x'].log_prob(inference_outputs['zy_x']) - generative_outputs['p_zy_y'].log_prob(

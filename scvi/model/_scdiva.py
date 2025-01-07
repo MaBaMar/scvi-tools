@@ -11,7 +11,7 @@ from scvi._types import Tunable
 from scvi.data import AnnDataManager
 from scvi.data._utils import _check_if_view, get_anndata_attribute
 from scvi.data.fields import LabelsWithUnlabeledObsField, NumericalObsField, LayerField, CategoricalObsField
-from scvi.dataloaders._data_splitting import DefaultDataSplitter
+from scvi.dataloaders._data_splitting import DefaultDataSplitter, SemiSupervisedDataSplitter
 from scvi.model._utils import _init_library_size, get_max_epochs_heuristic, use_distributed_sampler
 from scvi.model.base import RNASeqMixin, VAEMixin, BaseModelClass, UnsupervisedTrainingMixin
 from scvi.module import DIVA
@@ -116,6 +116,7 @@ class SCDIVA(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         batch_key: str | None = None,
         labels_key: str | None = None,
         size_factor_key: str | None = None,
+        unlabeled_category: str = 'unknown',
         **kwargs
     ):
         """%(summary)s.
@@ -132,7 +133,7 @@ class SCDIVA(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         anndata_fields = [
             LayerField(REGISTRY_KEYS.X_KEY, layer, is_count_data=True),
             CategoricalObsField(REGISTRY_KEYS.BATCH_KEY, batch_key),
-            CategoricalObsField(REGISTRY_KEYS.LABELS_KEY, labels_key),
+            LabelsWithUnlabeledObsField(REGISTRY_KEYS.LABELS_KEY, labels_key, unlabeled_category),
             NumericalObsField(REGISTRY_KEYS.SIZE_FACTOR_KEY, size_factor_key, required=False)
         ]
 
@@ -242,19 +243,20 @@ class SCDIVA(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         use_mean_as_samples=False
     ):
         """
-        :returns: (y_true, y_pred)
+        :returns: y_pred prediction encoded with the corresponding value
         """
+        if not hasattr(self, '_code_to_label'):
+            labels_state_registry = self.adata_manager.get_state_registry(REGISTRY_KEYS.LABELS_KEY)
+            self._code_to_label = labels_state_registry.categorical_mapping
+
         y_pred = []
-        y_true = []
         self._check_if_trained(warn=False)
         adata = self._validate_anndata(adata)
         scdl = self._make_data_loader(adata=adata, indices=indices, batch_size=batch_size)
 
         for tensors in scdl:
             y_pred.append(self.module.predict(tensors, mode, use_mean_as_samples))
-            y_true.append(tensors[REGISTRY_KEYS.LABELS_KEY])
-
-        return torch.cat(y_true, dim=0), torch.cat(y_pred, dim=0)
+        return self._code_to_label[torch.cat(y_pred, dim=0).cpu().numpy()]
 
     def train(
         self,
