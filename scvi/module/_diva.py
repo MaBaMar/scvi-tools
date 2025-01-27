@@ -684,8 +684,6 @@ class DIVA(BaseModuleClass):
                 y_pred = predictor_fn(dist.sample())
                 pred_avgs[i] = y_pred
             probs = torch.mean(pred_avgs, dim=0)
-            probs /= torch.norm(probs)
-
         return torch.argmax(probs, dim=1)
 
     @torch.inference_mode()
