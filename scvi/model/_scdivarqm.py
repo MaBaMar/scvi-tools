@@ -83,7 +83,7 @@ class ScDiVarQM(SCDIVA, ArchesMixin):
         )
 
         attr_dict, var_names, load_state_dict = _get_loaded_data(reference_model, device=device)
-        attr_dict["init_params_"]['kwargs']['kwargs']['pred_type'] = pred_type
+        attr_dict["init_params_"]['kwargs']['kwargs']['label_generator'] = pred_type
 
         _validate_var_names(adata, var_names)
 
@@ -128,13 +128,9 @@ class ScDiVarQM(SCDIVA, ArchesMixin):
                 continue
             new_ten = new_state_dict[key]
             if new_ten.size() == load_ten.size():
-                # print(f"not changed:\t{key}")  # TODO: remove print statement
                 load_target[key] = load_ten
                 continue
             else:
-                # print(f"changed:\t{key}")  # TODO: remove print statement
-                # print(model.module.n_labels, reference_model.module.n_labels)
-                # print(new_ten.size(), load_ten.size())
                 dim_diff = new_ten.size()[-1] - load_ten.size()[-1]
                 fixed_ten = torch.cat([load_ten, new_ten[..., -dim_diff:]], dim=-1)
                 load_target[key] = fixed_ten

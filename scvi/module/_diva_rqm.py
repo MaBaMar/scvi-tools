@@ -18,16 +18,16 @@ class RQMDiva(DIVA):
 
     _pred_func: Callable[[torch.Tensor], torch.Tensor]
 
-    def __init__(self, *args, pred_type: Literal['prior_based', 'internal_classifier'], **kwargs):
+    def __init__(self, *args, tuning_predictor: Literal['prior_based', 'internal_classifier'], **kwargs):
         super().__init__(*args, **kwargs)
-        logger.info(f"[RQMDiva] using pred_type: {pred_type}")
-        match pred_type:
+        logger.info(f"[RQMDiva] using pred_type: {tuning_predictor}")
+        match tuning_predictor:
             case 'prior_based':
                 self._pred_func = self._pred_prior
             case 'internal_classifier':
                 self._pred_func = self._pred_cls
             case _:
-                raise ValueError(f'Invalid pred_type {pred_type}')
+                raise ValueError(f'Invalid pred_type {tuning_predictor}')
 
 
     def _get_inference_input(self, tensors: dict[str, torch.Tensor], **kwargs):
@@ -75,7 +75,7 @@ class RQMDiva(DIVA):
         **kwargs
     ) -> dict[str, torch.Tensor | torch.distributions.Distribution]:
 
-        px_scale, px_r, px_rate, px_dropout = self.reconstruction_dxy_decoder.forward(
+        px_scale, px_r, px_rate, px_dropout = self.reconstruction_dxy_decoder(
             self.dispersion,
             zy_x,
             zd_x,
@@ -121,12 +121,8 @@ class RQMDiva(DIVA):
         inference_outputs,
         generative_outputs,
         kl_weight: float = 1.0,  # epsilon
-        ce_weight: float = 1.0,
         **kwargs
     ) -> LossOutput:
-
-        # IMPORTANT NOTE: we deactivated kl_scaling here
-        kl_weight = 1
 
         x = tensors[REGISTRY_KEYS.X_KEY]
 
@@ -154,11 +150,14 @@ class RQMDiva(DIVA):
 
         weighted_kl_local = kl_weight * kl_local_for_warmup
 
-        loss = torch.mean(neg_reconstruction_loss + weighted_kl_local)
+        loss = torch.mean(neg_reconstruction_loss + 0*weighted_kl_local)
 
         kl_local = {
             'kl_divergence_zd': kl_zd,
             'kl_divergence_zy': kl_zy,
         }
+
+        # print(neg_reconstruction_loss.mean())
+        # print({a: b.mean() for a, b in kl_local.items()})
 
         return LossOutput(loss, neg_reconstruction_loss, kl_local)
