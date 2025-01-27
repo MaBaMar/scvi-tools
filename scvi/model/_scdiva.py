@@ -240,7 +240,8 @@ class SCDIVA(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         adata: Optional[AnnData] = None,
         indices: Optional[Sequence[int]] = None,
         batch_size: Optional[int] = None,
-        use_mean_as_samples=False
+        use_mean_as_samples=False,
+        n_samples=100,
     ):
         """
         :returns: y_pred prediction encoded with the corresponding value
@@ -255,7 +256,7 @@ class SCDIVA(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         scdl = self._make_data_loader(adata=adata, indices=indices, batch_size=batch_size)
 
         for tensors in scdl:
-            y_pred.append(self.module.predict(tensors, mode, use_mean_as_samples))
+            y_pred.append(self.module.predict(tensors, mode, use_mean_as_samples, n_samples))
         return self._code_to_label[torch.cat(y_pred, dim=0).cpu().numpy()]
 
     def train(

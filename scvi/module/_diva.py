@@ -22,6 +22,7 @@ from torch.distributions import Normal, kl_divergence as kl, MixtureSameFamily, 
 
 logger = logging.Logger(__name__)
 
+
 # TODO: support minification
 class DIVA(BaseModuleClass):
     """base DIVA implementation, slight adaptation of model from original paper"""
@@ -623,7 +624,7 @@ class DIVA(BaseModuleClass):
 
     @torch.inference_mode()
     @auto_move_data
-    def predict(self, tensors, mode: Literal['prior_based', 'internal_classifier'], use_mean_as_sample=False):
+    def predict(self, tensors, mode: Literal['prior_based', 'internal_classifier'], use_mean_as_sample=False, n_samples=100):
         """
         Uses the model's internal prediction mechanisms to make predictions on query data. Do not use this method if you
         want to use downstream classifiers instead.
@@ -638,6 +639,9 @@ class DIVA(BaseModuleClass):
         use_mean_as_sample
             If true, uses the mean of the posterior normal distribution as sample instead of drawing from the posterior
             distribution. This reduces variance in predictions and is generally preferable in benchmarking settings
+        n_samples
+            Determines the number of Monte Carlo samples to draw (i.e. draws of zy_x). If `use_mean_as_sample` is true, this argument is
+            ignored.
 
         Returns
         -------
@@ -657,30 +661,47 @@ class DIVA(BaseModuleClass):
         else:
             x_ = x
 
-        dist, zy_x = self.posterior_zy_x_encoder(x_)
+        # use the mode to determine the prediction function
+        match mode:
+            case 'prior_based':
+                predictor_fn = self._pred_prior
+            case 'internal_classifier':
+                if not self._use_celltype_classifier:
+                    warnings.warn('internal_classifier mode requires `alpha_y > 0`. Using prior_based mode instead.', category=RuntimeWarning)
+                    predictor_fn = self._pred_prior
+                else:
+                    predictor_fn = self._pred_cls
+            case _:
+                raise ValueError("unsupported mode")
+
+        dist, _ = self.posterior_zy_x_encoder(x_)
+
         if use_mean_as_sample:
-            zy_x = dist.mean
+            probs = predictor_fn(dist.mean)
+        else:
+            pred_avgs = torch.zeros((n_samples, x_.shape[0], self.n_labels))
+            for i in range(n_samples):
+                y_pred = predictor_fn(dist.sample())
+                pred_avgs[i] = y_pred
+            probs = torch.mean(pred_avgs, dim=0)
+            probs /= torch.norm(probs)
 
-        if mode == 'internal_classifier':
-            if not self._use_celltype_classifier:
-                warnings.warn('internal_classifier mode requires `alpha_y > 0`. Using prior_based mode instead.',
-                              category=RuntimeWarning)
-                mode = 'prior_based'
-            else:
-                _, y_pred = self.aux_y_zy_enc(zy_x).max(dim=1)
-                return y_pred
+        return torch.argmax(probs, dim=1)
 
-        if mode == 'prior_based':
-            encodings = torch.eye(self.n_labels, device=self.device)
-            probs = torch.zeros((self.n_labels, x.shape[0]), device=self.device)
-            for idx in range(self.n_labels):
-                p_zy_y: torch.distributions.Normal
-                p_zy_y, _ = self.prior_zy_y_encoder(encodings[idx:idx + 1, :])
-                ind = Independent(p_zy_y, 1)
-                probs[idx, :] = ind.expand([zy_x.shape[0]]).log_prob(zy_x)
-            return probs.argmax(dim=0)
+    @torch.inference_mode()
+    def _pred_prior(self, zy_x: torch.Tensor) -> torch.Tensor:
+        encodings = torch.eye(self.n_labels, device=self.device)
+        probs = torch.zeros((zy_x.shape[0], self.n_labels), device=self.device)
+        for idx in range(self.n_labels):
+            p_zy_y: torch.distributions.Normal
+            p_zy_y, _ = self.prior_zy_y_encoder(encodings[idx:idx + 1, :])
+            ind = Independent(p_zy_y, 1)
+            probs[:, idx] = ind.expand([zy_x.shape[0]]).log_prob(zy_x).exp().T
+        return probs
 
-        raise ValueError("unsupported mode")
+    @torch.inference_mode()
+    def _pred_cls(self, zy_x: torch.Tensor) -> torch.Tensor:
+        return torch.softmax(self.aux_y_zy_enc(zy_x), dim=-1)
 
     def init_ce_weight_y(self, adata: AnnData, indices, label_key: str):
         """
@@ -697,7 +718,7 @@ class DIVA(BaseModuleClass):
         data_index_space = np.unique(cat_y)
         model_index_space = np.array(range(self.n_labels))
 
-        if len(t:=np.setdiff1d(data_index_space, model_index_space)) > 0:
+        if len(t := np.setdiff1d(data_index_space, model_index_space)) > 0:
             raise ValueError('Data contains classes with indices {}. Those are not supported by the used model instance. Make sure you only'
                              'use data that was set up for the model instance.'.format(t))
 

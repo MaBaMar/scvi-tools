@@ -16,16 +16,16 @@ logger = logging.getLogger(__name__)
 
 class RQMDiva(DIVA):
 
-    _pred_func: Callable[[torch.Tensor], torch.distributions.Categorical]
+    _pred_func: Callable[[torch.Tensor], torch.Tensor]
 
     def __init__(self, *args, pred_type: Literal['prior_based', 'internal_classifier'], **kwargs):
         super().__init__(*args, **kwargs)
         logger.info(f"[RQMDiva] using pred_type: {pred_type}")
         match pred_type:
             case 'prior_based':
-                self._pred_func = self._pred_hook_prior_base
+                self._pred_func = self._pred_prior
             case 'internal_classifier':
-                self._pred_func = self._pred_hook_cls_base
+                self._pred_func = self._pred_cls
             case _:
                 raise ValueError(f'Invalid pred_type {pred_type}')
 
@@ -104,46 +104,16 @@ class RQMDiva(DIVA):
             raise ValueError(
                 f"gene_likelihood must be one of ['zinb', 'nb','poisson'], but input was {self.gene_likelihood}"
             )
-
-        p_y_zy = self._pred_func(zy_x)
+        self.eval()
+        probs = self._pred_func(zy_x)
+        self.train()
+        p_y_zy = torch.distributions.Categorical(probs)
         y = p_y_zy.sample().view(-1,1)
 
         p_zd_d, _ = self.prior_zd_d_encoder(one_hot(d, self.n_batch))
         p_zy_y, _ = self.prior_zy_y_encoder(one_hot(y, self.n_labels))
 
         return {'px_recon': px_recon, 'p_zd_d': p_zd_d, 'p_zy_y': p_zy_y, 'p_y_zy': p_y_zy, 'y_pred': y}
-
-    @torch.inference_mode()
-    def _pred_hook_prior_base(self, zy_x: torch.Tensor) -> torch.distributions.Categorical:
-        """
-
-        Parameters
-        ----------
-        zy_x
-
-        Returns
-        -------
-        Distribution q_y__zy_x of the generated labels
-        """
-        self.eval()
-        encodings = torch.eye(self.n_labels, device=self.device)
-        probs = torch.zeros((self.n_labels, zy_x.shape[0]), device=self.device)
-        for idx in range(self.n_labels):
-            p_zy_y: torch.distributions.Normal
-            p_zy_y, _ = self.prior_zy_y_encoder(encodings[idx:idx + 1, :])
-            ind = Independent(p_zy_y, 1)
-            probs[idx, :] = ind.expand([zy_x.shape[0]]).log_prob(zy_x)
-        self.train()
-        dist = torch.distributions.Categorical(probs=torch.softmax(probs, dim=0).T)
-        return dist
-
-    @torch.inference_mode()
-    def _pred_hook_cls_base(self, zy_x: torch.Tensor) -> torch.distributions.Categorical:
-        self.eval()
-        probs = self.aux_y_zy_enc(zy_x)
-        self.train()
-        dist = torch.distributions.Categorical(probs=torch.softmax(probs, dim=-1))
-        return dist
 
     def loss(
         self,
