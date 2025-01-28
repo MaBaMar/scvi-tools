@@ -233,7 +233,6 @@ class SCDIVA(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         n_d = self._module_kwargs["n_latent_d"]
         return latent[:, :n_d], latent[:, n_d:]
 
-    @torch.inference_mode()
     def predict(
         self,
         mode: Literal['prior_based', 'internal_classifier'],

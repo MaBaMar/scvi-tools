@@ -17,6 +17,9 @@ from scvi.module._diva_rqm import RQMDiva
 from scvi.nn._base_components import FCLayers
 from scvi.utils._docstrings import devices_dsp
 
+import logging
+
+logger = logging.getLogger(__name__)
 
 class ScDiVarQM(SCDIVA, ArchesMixin):
     """
@@ -129,7 +132,6 @@ class ScDiVarQM(SCDIVA, ArchesMixin):
             new_ten = new_state_dict[key]
             if new_ten.size() == load_ten.size():
                 load_target[key] = load_ten
-                continue
             else:
                 dim_diff = new_ten.size()[-1] - load_ten.size()[-1]
                 fixed_ten = torch.cat([load_ten, new_ten[..., -dim_diff:]], dim=-1)
@@ -179,37 +181,34 @@ def _set_params_online_update(
         first_layer_of_grad_mod = "fc_layers" in key and ".0." in key and mod_name not in mod_no_grad
         # modules that need grad
         mod_force_grad = mod_name in mod_no_hooks_yes_grad
-        is_non_frozen_batchnorm = (
-                                      "fc_layers" in key
-                                      and ".1." in key
-                                      and "encoder" in key
-                                      and (not freeze_batchnorm_encoder)
-                                  ) or (
-                                      "fc_layers" in key
-                                      and ".1." in key
-                                      and "decoder" in key
-                                      and (not freeze_batchnorm_decoder)
-                                  )
+        is_non_frozen_batchnorm = "fc_layers" in key and ".1." in key and (
+            ("encoder" in key and not freeze_batchnorm_encoder) or
+            ("decoder" in key and not freeze_batchnorm_decoder)
+        )
+        logger.info(f'{key} is non frozen batchnorm? >> {is_non_frozen_batchnorm}')
 
         return first_layer_of_grad_mod | mod_force_grad | is_non_frozen_batchnorm
 
+    def recursive_bn_freeze(_mod):
+        if isinstance(_mod, torch.nn.BatchNorm1d):
+            logger.info(f'froze')
+            _mod.track_running_stats = False
+        else:
+            for _mod in _mod.children():
+                recursive_bn_freeze(_mod)
+
     for key, mod in module.named_modules():
-        # skip protected modules
+
+        if ("decoder" in key and freeze_batchnorm_decoder) or ("encoder" in key and freeze_batchnorm_encoder):
+            recursive_bn_freeze(mod)
+
         if key.split(".")[0] in mod_no_hooks_yes_grad:
             continue
-        if isinstance(mod, FCLayers):
+        elif isinstance(mod, FCLayers):
             mod.set_online_update_hooks(not no_hook_cond(key))
-            # if not no_hook_cond(key):
-            # print("Hooked:", key)
-        if isinstance(mod, torch.nn.Dropout):
+        elif isinstance(mod, torch.nn.Dropout):
             if freeze_dropout:
                 mod.p = 0
-        # momentum freezes the running stats of batchnorm
-        freeze_batchnorm = ("decoder" in key and freeze_batchnorm) or (
-            "encoder" in key and freeze_batchnorm
-        )
-        if isinstance(mod, torch.nn.BatchNorm1d) and freeze_batchnorm:
-            mod.momentum = 0
 
     for key, par in module.named_parameters():
         par.requires_grad = requires_grad(key)

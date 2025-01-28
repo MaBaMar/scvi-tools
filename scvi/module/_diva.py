@@ -386,8 +386,7 @@ class DIVA(BaseModuleClass):
             )
 
     def _get_inference_input(self, tensors: dict[str, torch.Tensor], **kwargs):
-        return {'x': tensors[REGISTRY_KEYS.X_KEY], 'd': tensors[REGISTRY_KEYS.BATCH_KEY],
-                'y': tensors[REGISTRY_KEYS.LABELS_KEY]}
+        return {'x': tensors[REGISTRY_KEYS.X_KEY], 'd': tensors[REGISTRY_KEYS.BATCH_KEY]}
 
     def _get_generative_input(
         self, tensors: dict[str, torch.Tensor],
@@ -423,9 +422,6 @@ class DIVA(BaseModuleClass):
         n_samples: int = 1,
         **kwargs
     ) -> dict[str, torch.Tensor | torch.distributions.Distribution]:
-        """
-        zd_x, zx_x, zy_x, q_zd_x, q_zx_x, q_zy_x, library
-        """
 
         # library size
         library = None
@@ -616,14 +612,16 @@ class DIVA(BaseModuleClass):
             "kl_divergence_zy": kl_zy if not self._unsupervised else 0
         }
 
+        extra_metrics.update({'kl_l': kl_l.mean(), 'kl_zd': kl_zd.mean(), 'kl_zy': kl_zy.mean()})
+
         return LossOutput(loss, neg_reconstruction_loss, kl_local, extra_metrics=extra_metrics)
 
     def sample(self, *args, **kwargs):
         # not really needed for our experiments
         raise NotImplementedError
 
-    @torch.inference_mode()
     @auto_move_data
+    @torch.inference_mode
     def predict(self, tensors, mode: Literal['prior_based', 'internal_classifier'], use_mean_as_sample=False, n_samples=100):
         """
         Uses the model's internal prediction mechanisms to make predictions on query data. Do not use this method if you
@@ -694,7 +692,7 @@ class DIVA(BaseModuleClass):
             p_zy_y: torch.distributions.Normal
             p_zy_y, _ = self.prior_zy_y_encoder(encodings[idx:idx + 1, :])
             ind = Independent(p_zy_y, 1)
-            probs[:, idx] = ind.expand([zy_x.shape[0]]).log_prob(zy_x).exp().T
+            probs[:, idx] = ind.expand([zy_x.shape[0]]).log_prob(zy_x).exp()
         return probs
 
     @torch.inference_mode()
