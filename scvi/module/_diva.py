@@ -692,8 +692,8 @@ class DIVA(BaseModuleClass):
             p_zy_y: torch.distributions.Normal
             p_zy_y, _ = self.prior_zy_y_encoder(encodings[idx:idx + 1, :])
             ind = Independent(p_zy_y, 1)
-            probs[:, idx] = ind.expand([zy_x.shape[0]]).log_prob(zy_x).exp()
-        return probs
+            probs[:, idx] = ind.expand([zy_x.shape[0]]).log_prob(zy_x)
+        return F.softmax(probs, dim=-1)
 
     @torch.inference_mode()
     def _pred_cls(self, zy_x: torch.Tensor) -> torch.Tensor:
