@@ -654,14 +654,15 @@ class TunedSCDIVA(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         adata: Optional[AnnData] = None,
         indices: Optional[Sequence[int]] = None,
         batch_size: Optional[int] = None,
-        use_mean_as_samples=False
+        use_mean_as_samples=False,
+        disable_train_security=False
     ):
         """
         :returns: (y_true, y_pred)
         """
         y_pred = []
         y_true = []
-        self._check_if_trained(warn=False)
+        self._check_if_trained(warn=disable_train_security)
         adata = self._validate_anndata(adata)
         scdl = self._make_data_loader(adata=adata, indices=indices, batch_size=batch_size)
 
