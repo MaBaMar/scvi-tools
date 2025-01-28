@@ -241,6 +241,7 @@ class SCDIVA(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         batch_size: Optional[int] = None,
         use_mean_as_samples=False,
         n_samples=100,
+        disable_train_security=False
     ):
         """
         :returns: y_pred prediction encoded with the corresponding value
@@ -250,7 +251,7 @@ class SCDIVA(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
             self._code_to_label = labels_state_registry.categorical_mapping
 
         y_pred = []
-        self._check_if_trained(warn=False)
+        self._check_if_trained(warn=disable_train_security)
         adata = self._validate_anndata(adata)
         scdl = self._make_data_loader(adata=adata, indices=indices, batch_size=batch_size)
 
