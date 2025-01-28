@@ -185,13 +185,11 @@ def _set_params_online_update(
             ("encoder" in key and not freeze_batchnorm_encoder) or
             ("decoder" in key and not freeze_batchnorm_decoder)
         )
-        logger.info(f'{key} is non frozen batchnorm? >> {is_non_frozen_batchnorm}')
 
         return first_layer_of_grad_mod | mod_force_grad | is_non_frozen_batchnorm
 
     def recursive_bn_freeze(_mod):
         if isinstance(_mod, torch.nn.BatchNorm1d):
-            logger.info(f'froze')
             _mod.track_running_stats = False
         else:
             for _mod in _mod.children():
