@@ -306,7 +306,7 @@ def _set_params_online_update(
             "encoder" in key and freeze_batchnorm_encoder
         )
         if isinstance(mod, torch.nn.BatchNorm1d) and freeze_batchnorm:
-            mod.momentum = 0
+            mod.momentum = 0 # TODO: THIS IS VERY UNRELIABLE!!!!!!!
 
     for key, par in module.named_parameters():
         par.requires_grad = requires_grad(key)

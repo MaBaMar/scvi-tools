@@ -31,7 +31,6 @@ class RQMDiva(DIVA):
                 raise ValueError(f'Invalid pred_type {label_generator}')
 
     # None of the inference methods are changed, as inference is identical when training on reference and query data
-
     @auto_move_data
     def generative(
         self,

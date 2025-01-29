@@ -74,7 +74,6 @@ class ScDiVarQM(SCDIVA, ArchesMixin):
         freeze_decoder_first_layer: bool = True,
         freeze_batchnorm_encoder: bool = True,
         freeze_batchnorm_decoder: bool = False,
-        freeze_classifier: bool = True,
         unlabeled_category: str = "unknown"
     ):
         """TODO: some_doc_string    """
