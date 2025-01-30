@@ -6,6 +6,7 @@ from typing import Literal, Callable
 
 import torch
 import torch.nn.functional as F
+from scipy.stats import entropy
 from scvi import REGISTRY_KEYS
 from scvi.distributions import ZeroInflatedNegativeBinomial, NegativeBinomial, Poisson
 from scvi.module._diva import DIVA
@@ -81,8 +82,9 @@ class RQMDiva(DIVA):
         probs = self._pred_func(zy_x)
         self.train() # TODO: analyze impact
         p_y_zy = torch.distributions.Categorical(probs)
-        y = p_y_zy.sample().view(-1, 1)
-
+        # y = p_y_zy.sample().view(-1, 1)
+        y = probs.argmax(dim=-1).view(-1, 1)
+        # print(entropy(pk = probs.detach().cpu(), axis=1).mean())
         # priors
         p_zy_y = None
         if self.use_learnable_priors:
