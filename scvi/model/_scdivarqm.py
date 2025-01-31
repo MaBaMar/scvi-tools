@@ -1,5 +1,5 @@
 import warnings
-from typing import Literal, Union, Callable
+from typing import Literal, Union, Callable, Optional, Sequence
 
 import torch
 from anndata import AnnData
@@ -18,6 +18,8 @@ from scvi.nn._base_components import FCLayers
 from scvi.utils._docstrings import devices_dsp
 
 import logging
+
+from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +151,50 @@ class ScDiVarQM(SCDIVA, ArchesMixin):
         model.is_trained_ = False
         return model
 
+    def get_reconstruction_likelihood(
+        self,
+        adata: Optional[AnnData] = None,
+        indices: Optional[Sequence[int]] = None,
+        n_mc_samples: int = 1000,
+        batch_size: Optional[int] = None,
+        **kwargs,
+    ) -> torch.tensor:
+        """
+        Used for sample selection.
+        Parameters
+        ----------
+        adata
+            AnnData object with equivalent structure to initial AnnData. If `None`, defaults to the
+            AnnData object used to initialize the model.
+        indices
+            Indices of cells in adata to use. If `None`, all cells are used.
+        n_mc_samples
+            Number of Monte Carlo samples to use for marginal LL estimation.
+        batch_size
+            Minibatch size for data loading into model. Defaults to `scvi.settings.batch_size`.
+        """
+        adata = self._validate_anndata(adata)
+        scdl = self._make_data_loader(
+            adata=adata,
+            indices=indices,
+            batch_size=batch_size,
+            shuffle=False,
+        )
+        if hasattr(self.module, "sample_reconstruction_ll"):
+            p_x_zl_sum = []
+            for tensors in tqdm(scdl):
+                px_zd_zy = self.module.sample_reconstruction_ll(tensors, n_mc_samples=n_mc_samples, **kwargs)
+
+                # bucket divide
+
+                p_x_zl_sum.append(px_zd_zy)
+
+            return torch.cat(p_x_zl_sum)
+        else:
+            raise NotImplementedError(
+                "sample_reconstruction_ll is not implemented for current model. "
+                "Please raise an issue on github if you need it."
+            )
 
 def _set_params_online_update(
     module,

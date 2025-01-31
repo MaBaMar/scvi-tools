@@ -655,9 +655,7 @@ class DIVA(BaseModuleClass):
 
         x = tensors[REGISTRY_KEYS.X_KEY]
         if self.log_variational:
-            x_ = torch.log(1 + x)
-        else:
-            x_ = x
+            x = torch.log(1 + x)
 
         # use the mode to determine the prediction function
         match mode:
@@ -665,24 +663,61 @@ class DIVA(BaseModuleClass):
                 predictor_fn = self._pred_prior
             case 'internal_classifier':
                 if not self._use_celltype_classifier:
-                    warnings.warn('internal_classifier mode requires `alpha_y > 0`. Using prior_based mode instead.', category=RuntimeWarning)
+                    warnings.warn('internal_classifier mode requires `alpha_y > 0`. Using prior_based mode instead.',
+                                  category=RuntimeWarning)
                     predictor_fn = self._pred_prior
                 else:
                     predictor_fn = self._pred_cls
             case _:
                 raise ValueError("unsupported mode")
 
-        dist, _ = self.posterior_zy_x_encoder(x_)
+        dist, _ = self.posterior_zy_x_encoder(x)
 
         if use_mean_as_sample:
             probs = predictor_fn(dist.mean)
         else:
-            pred_avgs = torch.zeros((n_samples, x_.shape[0], self.n_labels))
+            pred_avgs = torch.zeros((n_samples, x.shape[0], self.n_labels))
             for i in range(n_samples):
                 y_pred = predictor_fn(dist.sample())
                 pred_avgs[i] = y_pred
             probs = torch.mean(pred_avgs, dim=0)
         return torch.argmax(probs, dim=1)
+
+    def get_prediction_uncertainty(self, tensors, mode: Literal['prior_based', 'internal_classifier']):
+
+        # auto move did not work for directory
+        for key in tensors.keys():
+            tensors[key] = tensors[key].to(self.device)
+
+        if not mode in (md_tmp := ['prior_based', 'internal_classifier']):
+            raise ValueError(f"mode must be in {md_tmp}")
+
+        if self._unsupervised:
+            raise NotImplementedError("Unsupervised prediction not supported. Please use an external classifier")
+
+        x = tensors[REGISTRY_KEYS.X_KEY]
+        if self.log_variational:
+            x = torch.log(1 + x)
+
+        # use the mode to determine the prediction function
+        match mode:
+            case 'prior_based':
+                predictor_fn = self._pred_prior
+            case 'internal_classifier':
+                if not self._use_celltype_classifier:
+                    warnings.warn('internal_classifier mode requires `alpha_y > 0`. Using prior_based mode instead.',
+                                  category=RuntimeWarning)
+                    predictor_fn = self._pred_prior
+                else:
+                    predictor_fn = self._pred_cls
+            case _:
+                raise ValueError("unsupported mode")
+
+        dist, _ = self.posterior_zy_x_encoder(x)
+
+        probs = predictor_fn(dist.mean)
+        y = tensors[REGISTRY_KEYS.LABELS_KEY].flatten()
+        return probs.gather(1, y.unsqueeze(1)).squeeze(1).cpu().numpy(), y.cpu().numpy()
 
     @torch.inference_mode()
     def _pred_prior(self, zy_x: torch.Tensor) -> torch.Tensor:
@@ -759,3 +794,26 @@ class DIVA(BaseModuleClass):
         encodings = torch.eye(self.n_labels, device=self.device)
         p_zy_y, _ = self.prior_zy_y_encoder(encodings)
         return MixtureSameFamily(Categorical(torch.ones(self.n_labels, device=self.device)), Independent(p_zy_y, 1))
+
+    @torch.inference_mode()
+    def sample_log_likelihood(self, tensors, n_samples: int):
+        x = tensors[REGISTRY_KEYS.X_KEY]
+        d = tensors[REGISTRY_KEYS.BATCH_KEY]
+        y = tensors[REGISTRY_KEYS.LABELS_KEY]
+
+        if self.log_variational:
+            x = torch.log(1 + x)
+        llh_sum = 0
+        for i in range(n_samples):
+            inference_input = self._get_inference_input(tensors)
+            self._inference_input = inference_input
+            # HANDLE SIZE FACTOR
+            size_factor = ...  # TODO: complete
+            zd_x = self.posterior_zd_x_encoder(x)
+            zy_x = self.posterior_zy_x_encoder(x)
+            self.reconstruction_dxy_decoder(
+                self.dispersion,
+                zy_x,
+                zd_x,
+                size_factor
+            )

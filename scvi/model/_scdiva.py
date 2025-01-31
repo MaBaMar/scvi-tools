@@ -16,6 +16,7 @@ from scvi.model._utils import _init_library_size, get_max_epochs_heuristic, use_
 from scvi.model.base import RNASeqMixin, VAEMixin, BaseModelClass, UnsupervisedTrainingMixin
 from scvi.module import DIVA
 from scvi.module._diva_unsup import TunedDIVA
+from scvi.module.base import auto_move_data
 from scvi.train._trainingplans import scDIVA_plan
 from scvi.utils import setup_anndata_dsp
 from torch.distributions import Independent
@@ -425,6 +426,7 @@ class SCDIVA(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
             return self.draw_from_all_priors(tensors).max(axis=0)
 
     @torch.inference_mode()
+    @auto_move_data
     def draw_from_all_priors(self, tensors: torch.Tensor) -> np.ndarray:
         with torch.no_grad():
             encodings = torch.eye(self.module.n_labels, device=self.module.device)
@@ -439,6 +441,54 @@ class SCDIVA(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
                 probs.append(p.log_prob(tensors.to(self.module.device)).detach().cpu().numpy())
             return np.array(probs)
 
+    @torch.inference_mode()
+    def sample_highest_confidence_samples(
+        self,
+        mode: Literal['prior_based', 'internal_classifier'],
+        adata: Optional[AnnData],
+        indices: Optional[Sequence[int]] = None,
+        batch_size: Optional[int] = None,
+        n_samples=100
+    ):
+        """
+        Returns the indices of the `n_samples` highest confidence predictions per registered label. If a label has fewer than `n_samples`
+        members in `adata`, all of its members are selected.
+        Parameters
+        ----------
+        mode
+        adata
+        indices
+        batch_size
+        n_samples
+        Returns
+        -------
+        """
+
+        self._check_if_trained(warn=False)
+        adata = self._validate_anndata(adata)
+        scdl = self._make_data_loader(adata=adata, indices=indices, batch_size=batch_size)
+
+        probs = []
+        labels = []
+        index_mask = np.zeros((len(adata),), dtype=bool)
+
+        for tensors in scdl:
+            prob, label = self.module.get_prediction_uncertainty(tensors, mode)
+            probs.append(prob)
+            labels.append(label)
+        probs = np.concatenate(probs)
+        labels = np.concatenate(labels)
+
+        for lbl in range(self.module.n_labels):
+            mask = labels == lbl
+            candidates = probs[mask]
+            if len(candidates) < n_samples:
+                index_mask[mask] = True
+            else:
+                submask = np.zeros_like(candidates)
+                submask[np.argpartition(candidates, -n_samples)[-n_samples:]] = True
+                index_mask[mask] = submask
+        return index_mask
 
 class TunedSCDIVA(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
     _module_cls = TunedDIVA

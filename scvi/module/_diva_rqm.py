@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 from typing import Literal, Callable
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 from scipy.stats import entropy
@@ -147,4 +148,46 @@ class RQMDiva(DIVA):
             'kl_divergence_zy': kl_zy,
         }
 
-        return LossOutput(loss, neg_reconstruction_loss, kl_local, extra_metrics={'kl_l': kl_l.mean(), 'kl_zd': kl_zd.mean(), 'kl_zy': kl_zy.mean()})
+        return LossOutput(loss, -neg_reconstruction_loss, kl_local, extra_metrics={'kl_l': kl_l.mean(), 'kl_zd': kl_zd.mean(), 'kl_zy': kl_zy.mean()})
+
+    @torch.inference_mode()
+    def sample_reconstruction_ll(
+            self,
+            tensors,
+            n_mc_samples,
+            n_mc_samples_per_pass=1,
+    ):
+        """Computes the marginal log likelihood of the model.
+
+        Parameters
+        ----------
+        tensors
+            Dict of input tensors, typically corresponding to the items of the data loader.
+        n_mc_samples
+            Number of Monte Carlo samples to use for the estimation of the marginal log likelihood.
+        n_mc_samples_per_pass
+            Number of Monte Carlo samples to use per pass. This is useful to avoid memory issues.
+        """
+        # auto move did not work for directory
+        for key in tensors.keys():
+            tensors[key] = tensors[key].to(self.device)
+
+        p_x_zl_sum = []
+        if n_mc_samples_per_pass > n_mc_samples:
+            logger.warn(
+                "Number of chunks is larger than the total number of samples, setting it to the number of samples"
+            )
+            n_mc_samples_per_pass = n_mc_samples
+        n_passes = int(np.ceil(n_mc_samples / n_mc_samples_per_pass))
+        for _ in range(n_passes):
+            # Distribution parameters and sampled variables
+            _, _, losses = self.forward(
+                tensors, inference_kwargs={"n_samples": n_mc_samples_per_pass}
+            )
+
+            # Reconstruction Loss
+            p_x_zl = losses.dict_sum(losses.reconstruction_loss)
+            p_x_zl_sum.append(p_x_zl.cpu())
+        p_x_zl_sum = torch.logsumexp(torch.stack(p_x_zl_sum), dim=0)
+
+        return p_x_zl_sum
