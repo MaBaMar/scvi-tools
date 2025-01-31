@@ -36,7 +36,7 @@ class RQMDiva(DIVA):
         if conservativeness > 1 or conservativeness < 0:
             raise ValueError("conservativeness must be a value between 0 and 1")
         if conservativeness in [0,1]:
-            logger.warn(f"conservativeness is: {conservativeness}. Hence, not all training samples might be considered, potentially"
+            logger.warn(f"conservativeness is: {conservativeness}. Hence, not all training samples might be considered, potentially "
                         f"affecting the batch size. It is better to remove unwanted training samples from training data beforehand.")
 
         self.conservativeness = conservativeness
@@ -60,7 +60,7 @@ class RQMDiva(DIVA):
         library: torch.Tensor,
         size_factor=None,
     ) -> dict[str, torch.Tensor | torch.distributions.Distribution]:
-        has_no_label = ~(y == (self.n_labels-1)).flatten()
+        has_no_label = (y == (self.n_labels-1)).flatten()
         if not self.use_size_factor_key:
             size_factor = library
 
@@ -105,7 +105,7 @@ class RQMDiva(DIVA):
         self.train() # TODO: analyze impact
         p_y_zy = torch.distributions.Categorical(probs)
         y_pseudo = probs.argmax(dim=-1).view(-1, 1)
-        marginal_pseudo_weight[has_no_label] = torch.exp(p_y_zy.log_prob(y_pseudo.reshape(y_pseudo.shape[0], )).view(-1, ))
+        marginal_pseudo_weight[has_no_label] = torch.exp(p_y_zy.log_prob(y_pseudo.flatten()).view(-1, ))
 
         y[has_no_label] = y_pseudo
 
@@ -123,8 +123,8 @@ class RQMDiva(DIVA):
 
 
     def _weight_conservativeness(self, tensor: torch.Tensor, has_no_label: torch.Tensor) -> torch.Tensor:
-        mult_vec = torch.ones_like(tensor)*(1-self.conservativeness)
-        mult_vec[has_no_label] = self.conservativeness
+        mult_vec = torch.ones_like(tensor)*self.conservativeness
+        mult_vec[has_no_label] = (1-self.conservativeness)
         return tensor * mult_vec
 
 
