@@ -492,7 +492,6 @@ class SCDIVA(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
 
 class TunedSCDIVA(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
     _module_cls = TunedDIVA
-    # _training_plan_cls = SemiSupervisedTrainingPlan
     _training_plan_cls = scDIVA_plan
 
     def __init__(self,

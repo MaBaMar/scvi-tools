@@ -1,13 +1,12 @@
+import logging
 import warnings
 from typing import Literal, Union, Callable, Optional, Sequence
 
 import torch
 from anndata import AnnData
-from scvi import settings, REGISTRY_KEYS
-from scvi.data import AnnDataManager
+from scvi import settings
 from scvi.data._constants import _MODEL_NAME_KEY, _SETUP_ARGS_KEY, _SCVI_VERSION_KEY
-from scvi.data.fields import LayerField, CategoricalObsField, LabelsWithUnlabeledObsField
-from scvi.data.fields import NumericalObsField
+from scvi.dataloaders import SemiSupervisedDataLoader
 from scvi.model import SCDIVA
 from scvi.model._utils import parse_device_args
 from scvi.model.base import ArchesMixin, BaseModelClass
@@ -16,12 +15,10 @@ from scvi.model.base._utils import _validate_var_names, _initialize_model
 from scvi.module._diva_rqm import RQMDiva
 from scvi.nn._base_components import FCLayers
 from scvi.utils._docstrings import devices_dsp
-
-import logging
-
 from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
+
 
 class ScDiVarQM(SCDIVA, ArchesMixin):
     """
@@ -67,6 +64,7 @@ class ScDiVarQM(SCDIVA, ArchesMixin):
         adata: AnnData,
         reference_model: Union[str, BaseModelClass],
         pred_type: Literal['prior_based', 'internal_classifier'] = 'internal_classifier',
+        conservativeness: float = 0.5,
         inplace_subset_query_vars: bool = False,
         accelerator: str = "auto",
         device: Union[int, str] = "auto",
@@ -87,7 +85,10 @@ class ScDiVarQM(SCDIVA, ArchesMixin):
         )
 
         attr_dict, var_names, load_state_dict = _get_loaded_data(reference_model, device=device)
-        attr_dict["init_params_"]['kwargs']['kwargs']['label_generator'] = pred_type
+        attr_dict["init_params_"]['kwargs']['kwargs'].update(dict(
+            label_generator=pred_type,
+            conservativeness=conservativeness,
+        ))
 
         _validate_var_names(adata, var_names)
 
@@ -179,6 +180,7 @@ class ScDiVarQM(SCDIVA, ArchesMixin):
             indices=indices,
             batch_size=batch_size,
             shuffle=False,
+            data_loader_class=SemiSupervisedDataLoader
         )
         if hasattr(self.module, "sample_reconstruction_ll"):
             p_x_zl_sum = []
@@ -195,6 +197,7 @@ class ScDiVarQM(SCDIVA, ArchesMixin):
                 "sample_reconstruction_ll is not implemented for current model. "
                 "Please raise an issue on github if you need it."
             )
+
 
 def _set_params_online_update(
     module,

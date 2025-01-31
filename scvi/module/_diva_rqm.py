@@ -20,9 +20,26 @@ logger = logging.getLogger(__name__)
 class RQMDiva(DIVA):
 
     _pred_func: Callable[[torch.Tensor], torch.Tensor]
+    # TODO: make sure we can manipulate conservativeness!!!!
+    def __init__(self, *args, label_generator: Literal['prior_based', 'internal_classifier'], conservativeness: float, **kwargs):
+        """
 
-    def __init__(self, *args, label_generator: Literal['prior_based', 'internal_classifier'], **kwargs):
+        Parameters
+        ----------
+        args
+        label_generator
+        conservativeness This value defines how heavily unlabeled samples are considered. The supervised part of the loss is weighted by
+                         `conservativeness` while the unsupervised part of the loss is weighted by (1-`conservativeness`).
+        kwargs
+        """
         super().__init__(*args, **kwargs)
+        if conservativeness > 1 or conservativeness < 0:
+            raise ValueError("conservativeness must be a value between 0 and 1")
+        if conservativeness in [0,1]:
+            logger.warn(f"conservativeness is: {conservativeness}. Hence, not all training samples might be considered, potentially"
+                        f"affecting the batch size. It is better to remove unwanted training samples from training data beforehand.")
+
+        self.conservativeness = conservativeness
         logger.info(f"[RQMDiva] using pred_type: {label_generator}")
         match label_generator:
             case 'prior_based':
@@ -39,11 +56,11 @@ class RQMDiva(DIVA):
         zd_x: torch.Tensor,
         zy_x: torch.Tensor,
         d: torch.Tensor,
+        y: torch.Tensor,
         library: torch.Tensor,
         size_factor=None,
-        **kwargs
     ) -> dict[str, torch.Tensor | torch.distributions.Distribution]:
-
+        has_no_label = ~(y == (self.n_labels-1)).flatten()
         if not self.use_size_factor_key:
             size_factor = library
 
@@ -79,14 +96,19 @@ class RQMDiva(DIVA):
                 f"gene_likelihood must be one of ['zinb', 'nb','poisson'], but input was {self.gene_likelihood}"
             )
 
+        marginal_pseudo_weight = torch.ones((zy_x.shape[0],), device=self.device, dtype=torch.float)
+
+        # generate pseudo labels for samples without labels
+        zy_x_unlabeled = zy_x[has_no_label]
         self.eval() # TODO: analyze impact
-        probs = self._pred_func(zy_x)
+        probs = self._pred_func(zy_x_unlabeled)
         self.train() # TODO: analyze impact
         p_y_zy = torch.distributions.Categorical(probs)
-        # y = p_y_zy.sample().view(-1, 1)
-        y = probs.argmax(dim=-1).view(-1, 1)
-        # print(entropy(pk = probs.detach().cpu(), axis=1).mean())
-        # priors
+        y_pseudo = probs.argmax(dim=-1).view(-1, 1)
+        marginal_pseudo_weight[has_no_label] = torch.exp(p_y_zy.log_prob(y_pseudo.reshape(y_pseudo.shape[0], )).view(-1, ))
+
+        y[has_no_label] = y_pseudo
+
         p_zy_y = None
         if self.use_learnable_priors:
             p_zd_d, _ = self.prior_zd_d_encoder(one_hot(d, self.n_batch))
@@ -97,7 +119,14 @@ class RQMDiva(DIVA):
             if not self._unsupervised:
                 p_zy_y = Normal(torch.zeros_like(zy_x), torch.ones_like(zy_x))
 
-        return {'px_recon': px_recon, 'p_zd_d': p_zd_d, 'p_zy_y': p_zy_y, 'p_y_zy': p_y_zy, 'y_pred': y}
+        return {'px_recon': px_recon, 'p_zd_d': p_zd_d, 'p_zy_y': p_zy_y, 'marginal_pseudo_weight': marginal_pseudo_weight, 'has_no_label': has_no_label}
+
+
+    def _weight_conservativeness(self, tensor: torch.Tensor, has_no_label: torch.Tensor) -> torch.Tensor:
+        mult_vec = torch.ones_like(tensor)*(1-self.conservativeness)
+        mult_vec[has_no_label] = self.conservativeness
+        return tensor * mult_vec
+
 
     def loss(
         self,
@@ -109,31 +138,33 @@ class RQMDiva(DIVA):
     ) -> LossOutput:
 
         x = tensors[REGISTRY_KEYS.X_KEY]
+        has_no_label = generative_outputs['has_no_label']
 
         # avoid repeating the indexing process
         neg_reconstruction_loss = -generative_outputs["px_recon"].log_prob(x).sum(-1)
+        neg_reconstruction_loss = self._weight_conservativeness(neg_reconstruction_loss, has_no_label)
 
         # KL-loss
         kl_zd = kl(
             inference_outputs['q_zd_x'],
             generative_outputs['p_zd_d'],
         ).sum(dim=1)
+        kl_zd = self._weight_conservativeness(kl_zd, has_no_label)
 
         if not self.use_observed_lib_size:
             kl_l = kl(
                 inference_outputs["ql"],
                 generative_outputs["pl"],
             ).sum(dim=1)
+            kl_l = self._weight_conservativeness(kl_l, has_no_label)
         else:
             kl_l = torch.tensor(0.0, device=x.device)
 
-        p_y_zy = generative_outputs['p_y_zy']
-        y_pred = generative_outputs['y_pred']
+        marginal_pseudo_weight = generative_outputs['marginal_pseudo_weight']
 
-        marginal_weight = torch.exp(p_y_zy.log_prob(y_pred.reshape(y_pred.shape[0],)).view(-1,))
-
-        kl_zy = marginal_weight * (inference_outputs['q_zy_x'].log_prob(inference_outputs['zy_x']) - generative_outputs['p_zy_y'].log_prob(
+        kl_zy = marginal_pseudo_weight * (inference_outputs['q_zy_x'].log_prob(inference_outputs['zy_x']) - generative_outputs['p_zy_y'].log_prob(
             inference_outputs['zy_x'])).sum(-1).view(-1,)
+        kl_zy = self._weight_conservativeness(kl_zy, has_no_label)
 
         # KL loss
         kl_local_for_warmup = self.beta_d * kl_zd + self.beta_y * kl_zy
@@ -148,7 +179,9 @@ class RQMDiva(DIVA):
             'kl_divergence_zy': kl_zy,
         }
 
-        return LossOutput(loss, -neg_reconstruction_loss, kl_local, extra_metrics={'kl_l': kl_l.mean(), 'kl_zd': kl_zd.mean(), 'kl_zy': kl_zy.mean()})
+        return LossOutput(loss, neg_reconstruction_loss, kl_local, extra_metrics={'kl_l': kl_l.mean(), 'kl_zd': kl_zd.mean(),
+                                                                                  'kl_zy': kl_zy.mean(),
+                                                                                  'unlabeled_ratio': torch.mean(has_no_label, dtype=float)})
 
     @torch.inference_mode()
     def sample_reconstruction_ll(
