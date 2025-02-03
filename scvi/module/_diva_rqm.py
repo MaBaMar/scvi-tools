@@ -141,21 +141,21 @@ class RQMDiva(DIVA):
 
         # avoid repeating the indexing process
         neg_reconstruction_loss = -generative_outputs["px_recon"].log_prob(x).sum(-1)
-        neg_reconstruction_loss = self._weight_conservativeness(neg_reconstruction_loss, has_no_label)
+        # neg_reconstruction_loss = self._weight_conservativeness(neg_reconstruction_loss, has_no_label)
 
         # KL-loss
         kl_zd = kl(
             inference_outputs['q_zd_x'],
             generative_outputs['p_zd_d'],
         ).sum(dim=1)
-        kl_zd = self._weight_conservativeness(kl_zd, has_no_label)
+        # kl_zd = self._weight_conservativeness(kl_zd, has_no_label)
 
         if not self.use_observed_lib_size:
             kl_l = kl(
                 inference_outputs["ql"],
                 generative_outputs["pl"],
             ).sum(dim=1)
-            kl_l = self._weight_conservativeness(kl_l, has_no_label)
+            # kl_l = self._weight_conservativeness(kl_l, has_no_label)
         else:
             kl_l = torch.tensor(0.0, device=x.device)
 
@@ -163,7 +163,7 @@ class RQMDiva(DIVA):
 
         kl_zy = marginal_pseudo_weight * (inference_outputs['q_zy_x'].log_prob(inference_outputs['zy_x']) - generative_outputs['p_zy_y'].log_prob(
             inference_outputs['zy_x'])).sum(-1).view(-1,)
-        kl_zy = self._weight_conservativeness(kl_zy, has_no_label)
+        # kl_zy = self._weight_conservativeness(kl_zy, has_no_label)
 
         # KL loss
         kl_local_for_warmup = self.beta_d * kl_zd + self.beta_y * kl_zy
@@ -172,7 +172,12 @@ class RQMDiva(DIVA):
 
         weighted_kl_local = kl_weight * kl_local_for_warmup + kl_l
 
-        loss = torch.mean(neg_reconstruction_loss + weighted_kl_local) # + auxiliary_loss
+        loss_sum = neg_reconstruction_loss + weighted_kl_local
+
+        loss_unsupervised = loss_sum[has_no_label].mean() * (1-self.conservativeness)
+        loss_supervised = loss_sum[~has_no_label].mean() * self.conservativeness
+
+        loss = loss_unsupervised + loss_supervised #torch.mean(neg_reconstruction_loss + weighted_kl_local) # + auxiliary_loss
 
         kl_local = {
             'kl_divergence_l': kl_l,
@@ -183,7 +188,8 @@ class RQMDiva(DIVA):
         return LossOutput(loss, neg_reconstruction_loss, kl_local, extra_metrics={'kl_l': kl_l.mean(), 'kl_zd': kl_zd.mean(),
                                                                                   'kl_zy': kl_zy.mean(),
                                                                                   'unlabeled_ratio': torch.mean(has_no_label, dtype=float),
-                                                                                  })
+                                                                                  'loss_unsupervised': loss_unsupervised,
+                                                                                  'loss_supervised': loss_supervised})
 
     @torch.inference_mode()
     def sample_reconstruction_ll(

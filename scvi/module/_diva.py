@@ -51,7 +51,7 @@ class DIVA(BaseModuleClass):
         posterior_n_layers: int = 1,
         decoder_n_hidden: int = 128,
         decoder_n_layers: int = 1,
-        dropout_rate: float = 0.2,
+        dropout_rate: float = 0.1,
         lib_encoder_n_hidden: int = 128,
         lib_encoder_n_layers: int = 1,
         dispersion: Literal["gene", "gene-batch", "gene-label", "gene-cell"] = "gene",
