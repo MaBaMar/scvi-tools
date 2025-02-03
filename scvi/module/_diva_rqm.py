@@ -32,6 +32,7 @@ class RQMDiva(DIVA):
                          `conservativeness` while the unsupervised part of the loss is weighted by (1-`conservativeness`).
         kwargs
         """
+        kwargs['dropout_rate']=0
         super().__init__(*args, **kwargs)
         if conservativeness > 1 or conservativeness < 0:
             raise ValueError("conservativeness must be a value between 0 and 1")
@@ -169,9 +170,11 @@ class RQMDiva(DIVA):
         # KL loss
         kl_local_for_warmup = self.beta_d * kl_zd + self.beta_y * kl_zy
 
+        # auxiliary_loss = self.alpha_y * F.cross_entropy(prob_all[~has_no_label], y[~has_no_label].flatten()) * self.conservativeness
+
         weighted_kl_local = kl_weight * kl_local_for_warmup + kl_l
 
-        loss = torch.mean(neg_reconstruction_loss + weighted_kl_local)
+        loss = torch.mean(neg_reconstruction_loss + weighted_kl_local) # + auxiliary_loss
 
         kl_local = {
             'kl_divergence_l': kl_l,
@@ -181,7 +184,8 @@ class RQMDiva(DIVA):
 
         return LossOutput(loss, neg_reconstruction_loss, kl_local, extra_metrics={'kl_l': kl_l.mean(), 'kl_zd': kl_zd.mean(),
                                                                                   'kl_zy': kl_zy.mean(),
-                                                                                  'unlabeled_ratio': torch.mean(has_no_label, dtype=float)})
+                                                                                  'unlabeled_ratio': torch.mean(has_no_label, dtype=float),
+                                                                                  })
 
     @torch.inference_mode()
     def sample_reconstruction_ll(
