@@ -20,7 +20,6 @@ logger = logging.getLogger(__name__)
 class RQMDiva(DIVA):
 
     _pred_func: Callable[[torch.Tensor], torch.Tensor]
-    # TODO: make sure we can manipulate conservativeness!!!!
     def __init__(self, *args, label_generator: Literal['prior_based', 'internal_classifier'], conservativeness: float, **kwargs):
         """
 
@@ -32,7 +31,6 @@ class RQMDiva(DIVA):
                          `conservativeness` while the unsupervised part of the loss is weighted by (1-`conservativeness`).
         kwargs
         """
-        kwargs['dropout_rate']=0
         super().__init__(*args, **kwargs)
         if conservativeness > 1 or conservativeness < 0:
             raise ValueError("conservativeness must be a value between 0 and 1")
