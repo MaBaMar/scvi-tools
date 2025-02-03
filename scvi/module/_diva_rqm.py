@@ -189,7 +189,8 @@ class RQMDiva(DIVA):
                                                                                   'kl_zy': kl_zy.mean(),
                                                                                   'unlabeled_ratio': torch.mean(has_no_label, dtype=float),
                                                                                   'loss_unsupervised': loss_unsupervised,
-                                                                                  'loss_supervised': loss_supervised})
+                                                                                  'loss_supervised': loss_supervised,
+                                                                                  'num_unsup': np.sum(has_no_label)})
 
     @torch.inference_mode()
     def sample_reconstruction_ll(
