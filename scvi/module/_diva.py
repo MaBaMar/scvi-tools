@@ -719,7 +719,6 @@ class DIVA(BaseModuleClass):
         y = tensors[REGISTRY_KEYS.LABELS_KEY].flatten()
         return probs.gather(1, y.unsqueeze(1)).squeeze(1).cpu().numpy(), y.cpu().numpy()
 
-    @torch.inference_mode()
     def _pred_prior(self, zy_x: torch.Tensor) -> torch.Tensor:
         encodings = torch.eye(self.n_labels, device=self.device)
         probs = torch.zeros((zy_x.shape[0], self.n_labels), device=self.device)
@@ -730,7 +729,6 @@ class DIVA(BaseModuleClass):
             probs[:, idx] = ind.expand([zy_x.shape[0]]).log_prob(zy_x)
         return F.softmax(probs, dim=-1)
 
-    @torch.inference_mode()
     def _pred_cls(self, zy_x: torch.Tensor) -> torch.Tensor:
         return torch.softmax(self.aux_y_zy_enc(zy_x), dim=-1)
 

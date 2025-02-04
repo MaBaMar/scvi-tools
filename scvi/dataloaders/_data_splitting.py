@@ -8,7 +8,7 @@ from scvi import REGISTRY_KEYS, settings
 from scvi.data import AnnDataManager
 from scvi.data._utils import get_anndata_attribute
 from scvi.dataloaders._ann_dataloader import AnnDataLoader
-from scvi.dataloaders._semi_dataloader import SemiSupervisedDataLoader
+from scvi.dataloaders._semi_dataloader import SemiSupervisedDataLoader, SemiSupervisedFixedRatioDataLoader
 from scvi.model._utils import parse_device_args
 from scvi.utils._docstrings import devices_dsp
 from torch.utils.data import (
@@ -364,6 +364,25 @@ class SemiSupervisedDataSplitter(pl.LightningDataModule):
             )
         else:
             pass
+
+
+class MixedRatioDataSplitter(SemiSupervisedDataSplitter):
+    """
+    Semi supervised data splitter ensuring a fixed ratio uf supervised samples per batch.
+    """
+
+    def __init__(self, adata_manager: AnnDataManager, supervised_ratio: float = 0.1, **kwargs):
+        if supervised_ratio < 0 or supervised_ratio > 1:
+            raise ValueError("supervised_ratio must be between 0 and 1")
+        super().__init__(adata_manager, **kwargs)
+        self.supervised_ratio = supervised_ratio
+
+    def setup(self, stage: Optional[str] = None):
+        super().setup(stage=stage)
+        self.data_loader_kwargs.pop("n_samples_per_label", None)
+        self.data_loader_class = SemiSupervisedFixedRatioDataLoader
+        self.data_loader_kwargs.update({'supervised_ratio': self.supervised_ratio})
+
 
 
 @devices_dsp.dedent

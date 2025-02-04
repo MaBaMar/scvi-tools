@@ -4,6 +4,7 @@ from typing import Literal, Union, Callable, Optional, Sequence
 
 import torch
 from anndata import AnnData
+from scvi.dataloaders._data_splitting import MixedRatioDataSplitter
 from scvi import settings
 from scvi.data._constants import _MODEL_NAME_KEY, _SETUP_ARGS_KEY, _SCVI_VERSION_KEY
 from scvi.dataloaders import SemiSupervisedDataLoader
@@ -35,9 +36,12 @@ class ScDiVarQM(SCDIVA, ArchesMixin):
         dispersion: Literal["gene", "gene-batch", "gene-label", "gene-cell"] = "gene",
         gene_likelihood: Literal["zinb", "nb", "poisson"] = "zinb",
         latent_distribution: Literal["normal", "ln"] = "normal",
+        use_ratio_data_splitter=False,
         use_default_data_splitter=False,
         **kwargs
     ):
+        if use_ratio_data_splitter:
+            self._data_splitter_cls = MixedRatioDataSplitter
         super_kwargs = {
             "alpha_d": 0,  # deactivate the batch classifier
             # "arches_batch_extension_size": number_query_batches  # TODO: implement
@@ -74,7 +78,8 @@ class ScDiVarQM(SCDIVA, ArchesMixin):
         freeze_decoder_first_layer: bool = True,
         freeze_batchnorm_encoder: bool = True,
         freeze_batchnorm_decoder: bool = False,
-        unlabeled_category: str = "unknown"
+        unlabeled_category: str = "unknown",
+        use_ratio_data_splitter: bool = False,
     ):
         """TODO: some_doc_string    """
         _, _, device = parse_device_args(
@@ -109,6 +114,7 @@ class ScDiVarQM(SCDIVA, ArchesMixin):
             allow_missing_labels=True,
             **registry[_SETUP_ARGS_KEY]
         )
+        attr_dict['init_params_']['kwargs']['kwargs'].update({'use_ratio_data_splitter': use_ratio_data_splitter})
         model: ScDiVarQM = _initialize_model(cls, adata, attr_dict)
         adata_manager = model.get_anndata_manager(adata, required=True)
         version_split = adata_manager.registry[_SCVI_VERSION_KEY].split(".")

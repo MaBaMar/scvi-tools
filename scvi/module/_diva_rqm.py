@@ -99,9 +99,10 @@ class RQMDiva(DIVA):
 
         # generate pseudo labels for samples without labels
         zy_x_unlabeled = zy_x[has_no_label]
-        self.eval() # TODO: analyze impact
-        probs = self._pred_func(zy_x_unlabeled)
-        self.train() # TODO: analyze impact
+        with torch.no_grad():
+            self.eval() # TODO: analyze impact
+            probs = self._pred_func(zy_x_unlabeled)
+            self.train() # TODO: analyze impact
         p_y_zy = torch.distributions.Categorical(probs)
         y_pseudo = probs.argmax(dim=-1).view(-1, 1)
         marginal_pseudo_weight[has_no_label] = torch.exp(p_y_zy.log_prob(y_pseudo.flatten()).view(-1, ))
@@ -174,10 +175,18 @@ class RQMDiva(DIVA):
 
         loss_sum = neg_reconstruction_loss + weighted_kl_local
 
-        loss_unsupervised = loss_sum[has_no_label].mean() * (1-self.conservativeness)
-        loss_supervised = loss_sum[~has_no_label].mean() * self.conservativeness
+        no_label_percentage = has_no_label.mean(dtype=float)
+        if no_label_percentage < 1:
+            loss_supervised = loss_sum[~has_no_label].mean()
+        else:
+            loss_supervised = 0
+        if no_label_percentage > 0:
+            loss_unsupervised = loss_sum[has_no_label].mean()
+        else:
+            loss_unsupervised = 0
 
-        loss = loss_unsupervised + loss_supervised #torch.mean(neg_reconstruction_loss + weighted_kl_local) # + auxiliary_loss
+        loss = loss_supervised * self.conservativeness + loss_unsupervised * (1 - self.conservativeness)
+
 
         kl_local = {
             'kl_divergence_l': kl_l,
@@ -187,10 +196,10 @@ class RQMDiva(DIVA):
 
         return LossOutput(loss, neg_reconstruction_loss, kl_local, extra_metrics={'kl_l': kl_l.mean(), 'kl_zd': kl_zd.mean(),
                                                                                   'kl_zy': kl_zy.mean(),
-                                                                                  'unlabeled_ratio': torch.mean(has_no_label, dtype=float),
                                                                                   'loss_unsupervised': loss_unsupervised,
                                                                                   'loss_supervised': loss_supervised,
-                                                                                  'num_unsup': np.sum(has_no_label)})
+                                                                                  'no_label_percentage': no_label_percentage,
+                                                                                  'loss_sum_mean': loss_sum.mean()})
 
     @torch.inference_mode()
     def sample_reconstruction_ll(
