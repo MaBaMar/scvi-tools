@@ -472,6 +472,9 @@ class SCDIVA(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         labels = []
         index_mask = np.zeros((len(adata),), dtype=bool)
 
+        if n_samples == 0:
+            return index_mask
+
         for tensors in scdl:
             prob, label = self.module.get_prediction_uncertainty(tensors, mode)
             probs.append(prob)
