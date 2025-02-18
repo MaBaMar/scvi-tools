@@ -266,6 +266,7 @@ class DIVA(BaseModuleClass):
             n_hidden=decoder_n_hidden,
             use_batch_norm=use_batch_norm_decoder,
             use_layer_norm=use_layer_norm_decoder,
+            inject_covariates=False,
             **_extra_decoder_kwargs
         )
 
@@ -283,6 +284,7 @@ class DIVA(BaseModuleClass):
                     use_batch_norm=use_batch_norm_encoder,
                     use_layer_norm=use_layer_norm_encoder,
                     return_dist=True,
+                    inject_covariates=False,
                     **_extra_encoder_kwargs
                 )
             else:
@@ -296,6 +298,7 @@ class DIVA(BaseModuleClass):
                     use_layer_norm=use_layer_norm_encoder,
                     return_dist=True,
                     var=prior_variance_d,
+                    inject_covariates=False,
                     **_extra_encoder_kwargs
                 )
 
@@ -308,9 +311,10 @@ class DIVA(BaseModuleClass):
                         n_layers=priors_n_layers,
                         n_hidden=priors_n_hidden,
                         dropout_rate=self.dropout_rate,
-                        use_batch_norm=use_batch_norm_encoder,
-                        use_layer_norm=use_layer_norm_encoder,
+                        use_batch_norm=False,
+                        use_layer_norm=False,
                         return_dist=True,
+                        inject_covariates=False,
                         **_extra_encoder_kwargs
                     )
                 else:
@@ -320,26 +324,29 @@ class DIVA(BaseModuleClass):
                         n_layers=priors_n_layers,
                         n_hidden=priors_n_hidden,
                         dropout_rate=self.dropout_rate,
-                        use_batch_norm=use_batch_norm_encoder,
-                        use_layer_norm=use_layer_norm_encoder,
+                        use_batch_norm=False,
+                        use_layer_norm=False,
                         return_dist=True,
                         var=prior_variance_y,
+                        inject_covariates=False,
                         **_extra_encoder_kwargs
                     )
 
         """library model q(l|x)"""
         # l encoder goes from n_input-dimensional data to 1-d library size
-        self.l_encoder = Encoder(
-            n_input,
-            1,
-            n_layers=lib_encoder_n_layers,
-            n_hidden=lib_encoder_n_hidden,
-            dropout_rate=dropout_rate,
-            use_batch_norm=use_batch_norm_encoder,
-            use_layer_norm=use_layer_norm_encoder,
-            return_dist=True,
-            **_extra_encoder_kwargs,
-        )
+        if not use_observed_lib_size:
+            self.l_encoder = Encoder(
+                n_input,
+                1,
+                n_layers=lib_encoder_n_layers,
+                n_hidden=lib_encoder_n_hidden,
+                dropout_rate=dropout_rate,
+                use_batch_norm=use_batch_norm_encoder,
+                use_layer_norm=use_layer_norm_encoder,
+                return_dist=True,
+                inject_covariates=False,
+                **_extra_encoder_kwargs,
+            )
 
         """variational posteriors q_phi(zd|x), q_phi(zy|x)"""
         self.posterior_zd_x_encoder = Encoder(
@@ -351,6 +358,7 @@ class DIVA(BaseModuleClass):
             use_batch_norm=use_batch_norm_encoder,
             use_layer_norm=use_layer_norm_encoder,
             return_dist=True,
+            inject_covariates=False,
             **_extra_encoder_kwargs
         )
 
@@ -367,6 +375,7 @@ class DIVA(BaseModuleClass):
                 use_batch_norm=use_batch_norm_encoder,
                 use_layer_norm=use_layer_norm_encoder,
                 return_dist=True,
+                inject_covariates=False,
                 **_extra_encoder_kwargs
             )
 
@@ -798,6 +807,8 @@ class DIVA(BaseModuleClass):
         x = tensors[REGISTRY_KEYS.X_KEY]
         d = tensors[REGISTRY_KEYS.BATCH_KEY]
         y = tensors[REGISTRY_KEYS.LABELS_KEY]
+
+        raise NotImplementedError('This method is not fully implemented.')
 
         if self.log_variational:
             x = torch.log(1 + x)

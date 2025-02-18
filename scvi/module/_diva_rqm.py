@@ -20,7 +20,10 @@ logger = logging.getLogger(__name__)
 class RQMDiva(DIVA):
 
     _pred_func: Callable[[torch.Tensor], torch.Tensor]
-    def __init__(self, *args, label_generator: Literal['prior_based', 'internal_classifier'], conservativeness: float, **kwargs):
+    def __init__(self, *args,
+                 label_generator: Literal['prior_based', 'internal_classifier'],
+                 conservativeness: float,
+                 **kwargs):
         """
 
         Parameters
@@ -142,7 +145,6 @@ class RQMDiva(DIVA):
 
         # avoid repeating the indexing process
         neg_reconstruction_loss = -generative_outputs["px_recon"].log_prob(x).sum(-1)
-        # neg_reconstruction_loss = self._weight_conservativeness(neg_reconstruction_loss, has_no_label)
 
         # KL-loss
         kl_zd = kl(
@@ -186,8 +188,6 @@ class RQMDiva(DIVA):
             loss_unsupervised = 0
 
         loss = loss_supervised * self.conservativeness + loss_unsupervised * (1 - self.conservativeness)
-
-
         kl_local = {
             'kl_divergence_l': kl_l,
             'kl_divergence_zd': kl_zd,

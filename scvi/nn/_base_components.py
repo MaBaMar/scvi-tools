@@ -182,6 +182,13 @@ class FCLayers(nn.Module):
         return x
 
 
+class Predecoder(nn.Module):
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+        self.predecoder = FCLayers(*args, **kwargs)
+    def forward(self, x):
+        return self.predecoder(x)
+
 # Encoder
 class Encoder(nn.Module):
     """Encode data of ``n_input`` dimensions into a latent space of ``n_output`` dimensions.
@@ -557,7 +564,7 @@ class RQMDecoder(nn.Module):
             **kwargs
         )
 
-        self.celltype_predecoder = FCLayers(
+        self.celltype_predecoder = Predecoder(
             n_in=n_input_y,
             n_out=n_hidden,
             n_layers=0,
@@ -566,7 +573,7 @@ class RQMDecoder(nn.Module):
             **kwargs
         )
 
-        self.batch_predecoder = FCLayers(
+        self.batch_predecoder = Predecoder(
             n_in=n_input_d,
             n_out=n_hidden,
             n_layers=0,

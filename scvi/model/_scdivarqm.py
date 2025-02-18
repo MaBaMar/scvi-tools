@@ -2,6 +2,7 @@ import logging
 import warnings
 from typing import Literal, Union, Callable, Optional, Sequence
 
+import scvi.nn
 import torch
 from anndata import AnnData
 from scvi.dataloaders._data_splitting import MixedRatioDataSplitter
@@ -73,13 +74,14 @@ class ScDiVarQM(SCDIVA, ArchesMixin):
         accelerator: str = "auto",
         device: Union[int, str] = "auto",
         unfrozen: bool = False,
-        freeze_dropout: bool = False,
+        freeze_dropout_prior_encoder: bool = False,
         freeze_expression: bool = True,
         freeze_decoder_first_layer: bool = True,
         freeze_batchnorm_encoder: bool = True,
         freeze_batchnorm_decoder: bool = False,
         unlabeled_category: str = "unknown",
-        use_ratio_data_splitter: bool = False,
+        freeze_classifier: bool = True,
+        use_ratio_data_splitter: bool = False
     ):
         """TODO: some_doc_string    """
         _, _, device = parse_device_args(
@@ -153,7 +155,8 @@ class ScDiVarQM(SCDIVA, ArchesMixin):
             unfrozen=unfrozen,
             freeze_batchnorm_encoder=freeze_batchnorm_encoder,
             freeze_batchnorm_decoder=freeze_batchnorm_decoder,
-            freeze_dropout=freeze_dropout,
+            freeze_dropout_celltype_prior=freeze_dropout_prior_encoder,
+            freeze_classifier=freeze_classifier
         )
         model.is_trained_ = False
         return model
@@ -204,63 +207,79 @@ class ScDiVarQM(SCDIVA, ArchesMixin):
                 "Please raise an issue on github if you need it."
             )
 
+def _process_layer(layer: torch.nn.Sequential, freeze_grads: bool, freeze_batchnorm: bool, freeze_dropout: bool):
+    layer_components: list[torch.nn.Module] = [*layer.children()]
+    layer_components[0].requires_grad_(not freeze_grads)
+    layer_components[1].requires_grad_(not freeze_batchnorm)
+    layer_components[1].track_running_stats = not freeze_batchnorm
+    if freeze_dropout:
+        layer_components[-1].p = 0
+
+def _set_module_freeze_state(mod: scvi.nn.Encoder|scvi.nn.DecoderSCVI,
+                             freeeze_gradients: bool,
+                             apply_scArches: bool,
+                             freeze_batchnorm: bool,
+                             freeze_dropout: bool):
+    if not freeeze_gradients and apply_scArches:
+        freeeze_gradients = True
+        logger.warn('As scArches is applied, gradients will be frozen ignoring freeze_gradients=False')
+    for child in mod.children():
+        if isinstance(child, scvi.nn.FCLayers):
+            layers = child.fc_layers
+            if apply_scArches: # only call function if necessary
+                child.set_online_update_hooks()
+                _process_layer(layers[0], False, freeze_batchnorm, freeze_dropout)
+                layers = layers[1:]
+            for layer in layers:
+                _process_layer(layer, freeeze_gradients, freeze_batchnorm, freeze_dropout)
+        else:
+            child.requires_grad_(not freeeze_gradients)
 
 def _set_params_online_update(
-    module,
-    unfrozen,
-    freeze_batchnorm_encoder,
-    freeze_batchnorm_decoder,
-    freeze_dropout,
+    module: RQMDiva,
+    unfrozen: bool,
+    freeze_batchnorm_encoder: bool,
+    freeze_batchnorm_decoder: bool,
+    freeze_dropout_celltype_prior: bool,
+    freeze_classifier: bool
 ):
-    # print(60 * "=")
-    # print()
     """Freeze parts of network for scArches."""
     # do nothing if unfrozen
     if unfrozen:
         return
 
-    mod_no_grad = {"prior_zy_y_encoder", "aux_y_zy_enc", "celltype_predecoder", "joined_decoder"}
-    mod_no_hooks_yes_grad = {"l_encoder", "batch_predecoder", "posterior_zy_x_encoder", "posterior_zd_x_encoder"}
-    no_hooks = mod_no_grad.union(mod_no_hooks_yes_grad)
+    module.px_r.requires_grad = False
 
-    # those modules don't get gradient hooks
-    def no_hook_cond(key):
-        return key.split(".")[0] in no_hooks or key.split(".")[1] in no_hooks
-
-    def requires_grad(key):
-        mod_name = key.split(".")[0]
-        # set decoder layer that needs grad
-        if "reconstruction" in mod_name:
-            mod_name = key.split(".")[1]
-        first_layer_of_grad_mod = "fc_layers" in key and ".0." in key and mod_name not in mod_no_grad
-        # modules that need grad
-        mod_force_grad = mod_name in mod_no_hooks_yes_grad
-        is_non_frozen_batchnorm = "fc_layers" in key and ".1." in key and (
-            ("encoder" in key and not freeze_batchnorm_encoder) or
-            ("decoder" in key and not freeze_batchnorm_decoder)
-        )
-
-        return first_layer_of_grad_mod | mod_force_grad | is_non_frozen_batchnorm
-
-    def recursive_bn_freeze(_mod):
-        if isinstance(_mod, torch.nn.BatchNorm1d):
-            _mod.track_running_stats = False
-        else:
-            for _mod in _mod.children():
-                recursive_bn_freeze(_mod)
-
-    for key, mod in module.named_modules():
-
-        if ("decoder" in key and freeze_batchnorm_decoder) or ("encoder" in key and freeze_batchnorm_encoder):
-            recursive_bn_freeze(mod)
-
-        if key.split(".")[0] in mod_no_hooks_yes_grad:
-            continue
-        elif isinstance(mod, FCLayers):
-            mod.set_online_update_hooks(not no_hook_cond(key))
-        elif isinstance(mod, torch.nn.Dropout):
-            if freeze_dropout:
-                mod.p = 0
-
-    for key, par in module.named_parameters():
-        par.requires_grad = requires_grad(key)
+    for name, module in module.named_children():
+        """
+        Three cases
+        1. completely unfrozen
+        2. completely frozen
+        3. apply scARCHES to first layer
+        """
+        match name:
+            # decoder: batch predecoder batchnorm may be unfrozen
+            # same applies to joined decoder batchnorm
+            case 'reconstruction_dxy_decoder':
+                for name_, child in module.named_children():
+                    print(name_)
+                    is_batch_decoder = 'batch' in name_
+                    print(is_batch_decoder)
+                    k = 'joined' in name_
+                    _set_module_freeze_state(child, not is_batch_decoder, False, freeze_batchnorm_decoder, False)
+            case 'aux_y_zy_enc':
+                module.requires_grad_(not freeze_classifier)
+            case 'posterior_zy_x_encoder':
+                # completely unfrozen, freeze batch-norm if requested
+                _set_module_freeze_state(module, False, False, freeze_batchnorm_encoder, False)
+            case 'posterior_zd_x_encoder':
+                # completely unfrozen, freeze batch-norm if requested
+                _set_module_freeze_state(module, False, False, freeze_batchnorm_encoder, False)
+            case 'prior_zy_y_encoder':
+                # frozen! (should not contain any batch-norm)
+                _set_module_freeze_state(module, True, False, True, freeze_dropout_celltype_prior)
+            case 'prior_zd_d_encoder':
+                # apply scARCHES to first layer and freeze batch-norm if requested
+                _set_module_freeze_state(module, True, True, freeze_batchnorm_encoder, False)
+            case _:
+                raise ValueError(f'Model contains layer: {name} which it should not! Make sure the model has not been corrupted')
