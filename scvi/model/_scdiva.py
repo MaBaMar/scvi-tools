@@ -11,7 +11,7 @@ from scvi._types import Tunable
 from scvi.data import AnnDataManager
 from scvi.data._utils import _check_if_view, get_anndata_attribute
 from scvi.data.fields import LabelsWithUnlabeledObsField, NumericalObsField, LayerField, CategoricalObsField
-from scvi.dataloaders._data_splitting import DefaultDataSplitter, SemiSupervisedDataSplitter
+from scvi.dataloaders._data_splitting import DefaultDataSplitter
 from scvi.model._utils import _init_library_size, get_max_epochs_heuristic, use_distributed_sampler
 from scvi.model.base import RNASeqMixin, VAEMixin, BaseModelClass, UnsupervisedTrainingMixin
 from scvi.module import DIVA
@@ -419,12 +419,6 @@ class SCDIVA(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
 
         return adata
 
-    def y_prior_logprob(self, tensors: torch.Tensor, mode: Literal['max', 'mean'] = 'mean') -> torch.Tensor:
-        if mode == 'mean':
-            return self.module.full_y_prior_dist().log_prob(tensors.to(self.module.device)).cpu().numpy()
-        else:
-            return self.draw_from_all_priors(tensors).max(axis=0)
-
     @torch.inference_mode()
     @auto_move_data
     def draw_from_all_priors(self, tensors: torch.Tensor) -> np.ndarray:
@@ -492,6 +486,7 @@ class SCDIVA(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
                 submask[np.argpartition(candidates, -n_samples)[-n_samples:]] = True
                 index_mask[mask] = submask
         return index_mask
+
 
 class TunedSCDIVA(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
     _module_cls = TunedDIVA

@@ -9,7 +9,8 @@ from ._base_components import (
     MultiDecoder,
     MultiEncoder,
     MeanOnlyEncoder,
-    RQMDecoder
+    RQMDecoder,
+    CholeskyCovEncoder
 )
 from ._utils import one_hot
 
@@ -25,5 +26,6 @@ __all__ = [
     "MultiDecoder",
     "one_hot",
     "MeanOnlyEncoder",
-    "RQMDecoder"
+    "RQMDecoder",
+    "CholeskyCovEncoder",
 ]

@@ -15,12 +15,18 @@ from scvi import REGISTRY_KEYS
 from scvi._types import Tunable
 from scvi.distributions import ZeroInflatedNegativeBinomial, NegativeBinomial, Poisson
 from scvi.module.base import BaseModuleClass, LossOutput, auto_move_data
-from scvi.nn import Encoder, one_hot, MeanOnlyEncoder, RQMDecoder
+from scvi.nn import Encoder, one_hot, MeanOnlyEncoder, RQMDecoder, CholeskyCovEncoder
 from sklearn.utils.class_weight import compute_class_weight
 from torch import nn
-from torch.distributions import Normal, kl_divergence as kl, MixtureSameFamily, Independent, Categorical
+from torch.distributions import Normal, kl_divergence as kl, MultivariateNormal, register_kl
 
 logger = logging.Logger(__name__)
+
+
+@register_kl(Normal, MultivariateNormal)
+def _kl_normal_multivariate_normal(p: Normal, q):
+    p = MultivariateNormal(p.loc, torch.diag_embed(p.stddev ** 2))
+    return kl(p, q)
 
 
 # TODO: support minification
@@ -55,13 +61,14 @@ class DIVA(BaseModuleClass):
         lib_encoder_n_hidden: int = 128,
         lib_encoder_n_layers: int = 1,
         dispersion: Literal["gene", "gene-batch", "gene-label", "gene-cell"] = "gene",
-        log_variational: Tunable[bool] = True,
+        log_variational: Tunable[bool] = True,  # TODO: fix
         gene_likelihood: Literal["zinb", "nb", "poisson"] = "zinb",
         latent_distribution: Literal["normal", "ln"] = "normal",
         use_batch_norm: Literal["encoder", "decoder", "none", "both"] = "both",
         use_layer_norm: Literal["encoder", "decoder", "none", "both"] = "none",
         use_linear_batch_classifier: bool = False,
         use_linear_label_classifier: bool = False,
+        use_prior_based_predictions: bool = False,
         use_size_factor_key: bool = False,
         use_observed_lib_size: Tunable[bool] = True,
         use_learnable_priors: Tunable[bool] = True,
@@ -225,7 +232,7 @@ class DIVA(BaseModuleClass):
         # if latent spaces are used, but the classifiers deactivated, the classifiers are removed from inference to
         # speed up the model
         self._use_batch_classifier = alpha_d != 0
-        self._use_celltype_classifier = alpha_y != 0 and not self._unsupervised
+        self._use_celltype_classifier = alpha_y != 0 and not self._unsupervised and not use_prior_based_predictions
 
         logger.info(f"Using batch classifier:  {self._use_batch_classifier}")
         logger.info(f"Using celltype classifier:  {self._use_celltype_classifier}")
@@ -305,8 +312,8 @@ class DIVA(BaseModuleClass):
             # deactivate the y latent space for unsupervised mode
             if not self._unsupervised:
                 if prior_variance_y is None:
-                    self.prior_zy_y_encoder = Encoder(
-                        n_input=n_labels,
+                    self.prior_zy_y_encoder = CholeskyCovEncoder(
+                        n_input=n_labels - 1,
                         n_output=n_latent_y,
                         n_layers=priors_n_layers,
                         n_hidden=priors_n_hidden,
@@ -319,7 +326,7 @@ class DIVA(BaseModuleClass):
                     )
                 else:
                     self.prior_zy_y_encoder = MeanOnlyEncoder(
-                        n_input=n_labels,
+                        n_input=n_labels - 1,
                         n_output=n_latent_y,
                         n_layers=priors_n_layers,
                         n_hidden=priors_n_hidden,
@@ -384,7 +391,7 @@ class DIVA(BaseModuleClass):
             if self._use_celltype_classifier:
                 self.aux_y_zy_enc = torch.nn.Sequential(
                     *[] if use_linear_label_classifier else [nn.ReLU()],
-                    nn.Linear(n_latent_y, n_labels)
+                    nn.Linear(n_latent_y, n_labels - 1)
                 )
 
         """auxiliary task q_w(d|zd)"""
@@ -523,7 +530,7 @@ class DIVA(BaseModuleClass):
         if self.use_learnable_priors:
             p_zd_d, _ = self.prior_zd_d_encoder(one_hot(d, self.n_batch))
             if not self._unsupervised:
-                p_zy_y, _ = self.prior_zy_y_encoder(one_hot(y, self.n_labels))
+                p_zy_y, _ = self.prior_zy_y_encoder(one_hot(y, self.n_labels - 1))
         else:
             p_zd_d = Normal(torch.zeros_like(zd_x), torch.ones_like(zd_x))
             if not self._unsupervised:
@@ -531,7 +538,13 @@ class DIVA(BaseModuleClass):
 
         # auxiliary losses
         d_hat = self.aux_d_zd_enc(zd_x) if self._use_batch_classifier else None
-        y_hat = self.aux_y_zy_enc(zy_x) if self._use_celltype_classifier else None
+        # """
+        if self._use_celltype_classifier:
+            y_hat = self._pred_cls(zy_x)
+        elif not self._unsupervised:
+            y_hat = self._pred_prior(zy_x)
+        else:
+            y_hat = None
 
         outputs = {'px_recon': px_recon, 'd_hat': d_hat, 'y_hat': y_hat, 'p_zd_d': p_zd_d, 'p_zy_y': p_zy_y}
 
@@ -568,7 +581,7 @@ class DIVA(BaseModuleClass):
         kl_zd = kl(
             inference_outputs["q_zd_x"],
             generative_outputs["p_zd_d"]
-        ).sum(dim=1)
+        ).sum(dim=-1)
 
         if not self.use_observed_lib_size:
             kl_l = kl(
@@ -584,15 +597,15 @@ class DIVA(BaseModuleClass):
                 "No weights initialized for balanced KL of DIVA model.\n"
                 "Use `.init_kl_weights` to initialize them.")
 
-        kl_local_for_warmup = self.beta_d * kl_zd * self._kl_weights_d.to(self.device)[d]
+        kl_local_for_warmup = self.beta_d * kl_zd * self._kl_weights_d.to(self.device)[d].flatten()
 
         if not self._unsupervised:
             kl_zy = kl(
                 inference_outputs["q_zy_x"],
                 generative_outputs["p_zy_y"]
-            ).sum(dim=1)
+            )
 
-            kl_local_for_warmup += self.beta_y * kl_zy * self._kl_weights_y.to(self.device)[y]
+            kl_local_for_warmup += self.beta_y * kl_zy * self._kl_weights_y.to(self.device)[y].flatten()
         else:
             kl_zy = 0
 
@@ -601,12 +614,12 @@ class DIVA(BaseModuleClass):
 
         if self._use_batch_classifier:
             # auxiliary losses
-            aux_d = F.cross_entropy(generative_outputs["d_hat"], d.view(-1, ))
+            aux_d = F.cross_entropy(generative_outputs["d_hat"], d.flatten())
             aux_loss += self.alpha_d * aux_d
             extra_metrics["aux_d"] = aux_d
 
-        if self._use_celltype_classifier:
-            aux_y = F.cross_entropy(generative_outputs["y_hat"], y.view(-1, ), weight=self._ce_weights_y.to(self.device))
+        if not self._unsupervised:
+            aux_y = F.cross_entropy(generative_outputs["y_hat"], y.flatten(), weight=self._ce_weights_y.to(self.device))
             aux_loss += self.alpha_y * aux_y
             extra_metrics["aux_y"] = aux_y
 
@@ -685,7 +698,7 @@ class DIVA(BaseModuleClass):
         if use_mean_as_sample:
             probs = predictor_fn(dist.mean)
         else:
-            pred_avgs = torch.zeros((n_samples, x.shape[0], self.n_labels))
+            pred_avgs = torch.zeros((n_samples, x.shape[0], self.n_labels - 1))
             for i in range(n_samples):
                 y_pred = predictor_fn(dist.sample())
                 pred_avgs[i] = y_pred
@@ -729,17 +742,14 @@ class DIVA(BaseModuleClass):
         return probs.gather(1, y.unsqueeze(1)).squeeze(1).cpu().numpy(), y.cpu().numpy()
 
     def _pred_prior(self, zy_x: torch.Tensor) -> torch.Tensor:
-        encodings = torch.eye(self.n_labels, device=self.device)
-        probs = torch.zeros((zy_x.shape[0], self.n_labels), device=self.device)
-        for idx in range(self.n_labels):
-            p_zy_y: torch.distributions.Normal
-            p_zy_y, _ = self.prior_zy_y_encoder(encodings[idx:idx + 1, :])
-            ind = Independent(p_zy_y, 1)
-            probs[:, idx] = ind.expand([zy_x.shape[0]]).log_prob(zy_x)
+        encodings = torch.eye(self.n_labels - 1, device=self.device)
+        p_zy_y: torch.distributions.MultivariateNormal
+        p_zy_y, _ = self.prior_zy_y_encoder(encodings)
+        probs = p_zy_y.log_prob(zy_x.unsqueeze(1))
         return F.softmax(probs, dim=-1)
 
     def _pred_cls(self, zy_x: torch.Tensor) -> torch.Tensor:
-        return torch.softmax(self.aux_y_zy_enc(zy_x), dim=-1)
+        return F.softmax(self.aux_y_zy_enc(zy_x), dim=-1)
 
     def init_ce_weight_y(self, adata: AnnData, indices, label_key: str):
         """
@@ -754,13 +764,13 @@ class DIVA(BaseModuleClass):
         """
         cat_y = adata.obs[label_key].cat.codes[indices]
         data_index_space = np.unique(cat_y)
-        model_index_space = np.array(range(self.n_labels))
+        model_index_space = np.array(range(self.n_labels - 1))
 
         if len(t := np.setdiff1d(data_index_space, model_index_space)) > 0:
             raise ValueError('Data contains classes with indices {}. Those are not supported by the used model instance. Make sure you only'
                              'use data that was set up for the model instance.'.format(t))
 
-        weight_arr = np.zeros(self.n_labels)
+        weight_arr = np.zeros(self.n_labels - 1)
         weight_arr[data_index_space] = compute_class_weight('balanced', classes=data_index_space, y=cat_y)
 
         self._ce_weights_y = torch.tensor(weight_arr, device=self.device, dtype=torch.float)
@@ -781,26 +791,14 @@ class DIVA(BaseModuleClass):
 
         """use # samples / (1 + # classes * # bincount) to allow calculation for empty batches (here 1+ in divisor)"""
         cat_d_corrected = np.append(cat_d, range(self.n_batch))
-        cat_y_corrected = np.append(cat_y, range(self.n_labels))
+        cat_y_corrected = np.append(cat_y, range(self.n_labels - 1))
 
-        self._kl_weights_y = torch.from_numpy(compute_class_weight('balanced', classes=np.array(range(self.n_labels)), y=cat_y_corrected))
+        self._kl_weights_y = torch.from_numpy(
+            compute_class_weight('balanced', classes=np.array(range(self.n_labels - 1)), y=cat_y_corrected))
         self._kl_weights_d = torch.from_numpy(compute_class_weight('balanced', classes=np.array(range(self.n_batch)), y=cat_d_corrected))
 
         self._kl_weights_y[cat_y_holdout] = 1
         self._kl_weights_d[cat_d_holdout] = 1
-
-    @torch.inference_mode()
-    def full_y_prior_dist(self):
-        """
-        Combines the learned priors distribution to a joint gaussian mixture model.
-        Returns
-        -------
-        MixtureSameFamily
-            The gaussian mixture model combining the learned priors of the cell-type latent space.
-        """
-        encodings = torch.eye(self.n_labels, device=self.device)
-        p_zy_y, _ = self.prior_zy_y_encoder(encodings)
-        return MixtureSameFamily(Categorical(torch.ones(self.n_labels, device=self.device)), Independent(p_zy_y, 1))
 
     @torch.inference_mode()
     def sample_log_likelihood(self, tensors, n_samples: int):

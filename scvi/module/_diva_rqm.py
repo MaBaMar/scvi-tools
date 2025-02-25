@@ -7,19 +7,19 @@ from typing import Literal, Callable
 import numpy as np
 import torch
 import torch.nn.functional as F
-from scipy.stats import entropy
 from scvi import REGISTRY_KEYS
 from scvi.distributions import ZeroInflatedNegativeBinomial, NegativeBinomial, Poisson
 from scvi.module._diva import DIVA
 from scvi.module.base import LossOutput, auto_move_data
 from scvi.nn import one_hot
-from torch.distributions import kl_divergence as kl, OneHotCategorical, Independent, Normal
+from torch.distributions import kl_divergence as kl, Normal
 
 logger = logging.getLogger(__name__)
 
-class RQMDiva(DIVA):
 
+class RQMDiva(DIVA):
     _pred_func: Callable[[torch.Tensor], torch.Tensor]
+
     def __init__(self, *args,
                  label_generator: Literal['prior_based', 'internal_classifier'],
                  conservativeness: float,
@@ -37,7 +37,7 @@ class RQMDiva(DIVA):
         super().__init__(*args, **kwargs)
         if conservativeness > 1 or conservativeness < 0:
             raise ValueError("conservativeness must be a value between 0 and 1")
-        if conservativeness in [0,1]:
+        if conservativeness in [0, 1]:
             logger.warn(f"conservativeness is: {conservativeness}. Hence, not all training samples might be considered, potentially "
                         f"affecting the batch size. It is better to remove unwanted training samples from training data beforehand.")
 
@@ -62,7 +62,7 @@ class RQMDiva(DIVA):
         library: torch.Tensor,
         size_factor=None,
     ) -> dict[str, torch.Tensor | torch.distributions.Distribution]:
-        has_no_label = (y == (self.n_labels-1)).flatten()
+        has_no_label = (y == (self.n_labels - 1)).flatten()
         if not self.use_size_factor_key:
             size_factor = library
 
@@ -103,9 +103,9 @@ class RQMDiva(DIVA):
         # generate pseudo labels for samples without labels
         zy_x_unlabeled = zy_x[has_no_label]
         with torch.no_grad():
-            self.eval() # TODO: analyze impact
+            self.eval()  # TODO: analyze impact
             probs = self._pred_func(zy_x_unlabeled)
-            self.train() # TODO: analyze impact
+            self.train()  # TODO: analyze impact
         p_y_zy = torch.distributions.Categorical(probs)
         y_pseudo = probs.argmax(dim=-1).view(-1, 1)
         marginal_pseudo_weight[has_no_label] = torch.exp(p_y_zy.log_prob(y_pseudo.flatten()).view(-1, ))
@@ -116,20 +116,19 @@ class RQMDiva(DIVA):
         if self.use_learnable_priors:
             p_zd_d, _ = self.prior_zd_d_encoder(one_hot(d, self.n_batch))
             if not self._unsupervised:
-                p_zy_y, _ = self.prior_zy_y_encoder(one_hot(y, self.n_labels))
+                p_zy_y, _ = self.prior_zy_y_encoder(one_hot(y, self.n_labels - 1))
         else:
             p_zd_d = Normal(torch.zeros_like(zd_x), torch.ones_like(zd_x))
             if not self._unsupervised:
                 p_zy_y = Normal(torch.zeros_like(zy_x), torch.ones_like(zy_x))
 
-        return {'px_recon': px_recon, 'p_zd_d': p_zd_d, 'p_zy_y': p_zy_y, 'marginal_pseudo_weight': marginal_pseudo_weight, 'has_no_label': has_no_label}
-
+        return {'px_recon': px_recon, 'p_zd_d': p_zd_d, 'p_zy_y': p_zy_y, 'marginal_pseudo_weight': marginal_pseudo_weight,
+                'has_no_label': has_no_label}
 
     def _weight_conservativeness(self, tensor: torch.Tensor, has_no_label: torch.Tensor) -> torch.Tensor:
-        mult_vec = torch.ones_like(tensor)*self.conservativeness
-        mult_vec[has_no_label] = (1-self.conservativeness)
+        mult_vec = torch.ones_like(tensor) * self.conservativeness
+        mult_vec[has_no_label] = (1 - self.conservativeness)
         return tensor * mult_vec
-
 
     def loss(
         self,
@@ -150,7 +149,7 @@ class RQMDiva(DIVA):
         kl_zd = kl(
             inference_outputs['q_zd_x'],
             generative_outputs['p_zd_d'],
-        ).sum(dim=1)
+        ).sum(dim=-1)
         # kl_zd = self._weight_conservativeness(kl_zd, has_no_label)
 
         if not self.use_observed_lib_size:
@@ -164,8 +163,9 @@ class RQMDiva(DIVA):
 
         marginal_pseudo_weight = generative_outputs['marginal_pseudo_weight']
 
-        kl_zy = marginal_pseudo_weight * (inference_outputs['q_zy_x'].log_prob(inference_outputs['zy_x']) - generative_outputs['p_zy_y'].log_prob(
-            inference_outputs['zy_x'])).sum(-1).view(-1,)
+        kl_zy = marginal_pseudo_weight * (
+                inference_outputs['q_zy_x'].log_prob(inference_outputs['zy_x']).sum(-1) - generative_outputs['p_zy_y'].log_prob(
+                inference_outputs['zy_x']))
         # kl_zy = self._weight_conservativeness(kl_zy, has_no_label)
 
         # KL loss
@@ -203,10 +203,10 @@ class RQMDiva(DIVA):
 
     @torch.inference_mode()
     def sample_reconstruction_ll(
-            self,
-            tensors,
-            n_mc_samples,
-            n_mc_samples_per_pass=1,
+        self,
+        tensors,
+        n_mc_samples,
+        n_mc_samples_per_pass=1,
     ):
         """Computes the marginal log likelihood of the model.
 

@@ -3,8 +3,9 @@ from collections.abc import Iterable
 from typing import Callable, Literal, Optional
 
 import torch
+import torch.nn.functional as F
 from torch import nn
-from torch.distributions import Normal
+from torch.distributions import Normal, MultivariateNormal
 from torch.nn import ModuleList
 
 from ._utils import one_hot
@@ -186,8 +187,10 @@ class Predecoder(nn.Module):
     def __init__(self, *args, **kwargs):
         super().__init__()
         self.predecoder = FCLayers(*args, **kwargs)
+
     def forward(self, x):
         return self.predecoder(x)
+
 
 # Encoder
 class Encoder(nn.Module):
@@ -291,6 +294,90 @@ class Encoder(nn.Module):
         if self.return_dist:
             return dist, latent
         return q_m, q_v, latent
+
+
+class CholeskyCovEncoder(nn.Module):
+    def __init__(
+        self,
+        n_input: int,
+        n_output: int,
+        n_cat_list: Iterable[int] = None,
+        n_layers: int = 1,
+        n_hidden: int = 128,
+        dropout_rate: float = 0.1,
+        distribution: str = "normal",
+        var_eps: float = 1e-4,
+        var_activation_diag: Optional[Callable] = None,
+        var_activation_off_diag: Optional[Callable] = None,
+        return_dist: bool = False,
+        **kwargs,
+    ):
+        super().__init__()
+
+        self.distribution = distribution
+        self.var_eps = var_eps
+        self.encoder = FCLayers(
+            n_in=n_input,
+            n_out=n_hidden,
+            n_cat_list=n_cat_list,
+            n_layers=n_layers,
+            n_hidden=n_hidden,
+            dropout_rate=dropout_rate,
+            **kwargs,
+        )
+        self.mean_encoder = nn.Linear(n_hidden, n_output)
+        self.var_encoder = nn.Sequential(
+            # nn.BatchNorm1d(n_hidden), # TODO: potential bug source
+            nn.Linear(n_hidden, (n_output * (n_output + 1)) // 2)
+        )
+        self.return_dist = return_dist
+
+        if distribution == "ln":
+            self.z_transformation = nn.Softmax(dim=-1)
+        else:
+            self.z_transformation = _identity
+        self.var_activation_diag = F.softplus if var_activation_diag is None else var_activation_diag
+        self.var_activation_off_diag = torch.exp if var_activation_off_diag is None else var_activation_off_diag
+
+    def forward(self, x: torch.Tensor, *cat_list: int):
+        r"""The forward computation for a single sample.
+
+         #. Encodes the data into latent space using the encoder network
+         #. Generates a mean \\( q_m \\) and full covariance matrix variance \\( \\Sigma \\)
+         #. Samples a new value from an multivariate normal \\( \\sim Ne(q_m, \\Sigma \\)
+
+        Parameters
+        ----------
+        x
+            tensor with shape (n_input,)
+        cat_list
+            list of category membership(s) for this sample
+
+        Returns
+        -------
+        3-tuple of :py:class:`torch.Tensor`
+            tensors of shape ``(n_latent,)`` for mean and var, and sample
+
+        """
+        # Parameters for latent distribution
+        q = self.encoder(x, *cat_list)
+        q_m = self.mean_encoder(q)
+        d = q_m.shape[1]
+        l_chol = torch.zeros((q_m.shape[0], d, d), device=q_m.device)
+        l_chol[:, *torch.tril_indices(d, d, offset=0).tolist()] = self.var_encoder(q)
+        range_idx = torch.arange(d)
+        l_chol[:, range_idx, range_idx] = self.var_activation_diag(l_chol[:, range_idx, range_idx])
+
+        cov_mats = l_chol @ l_chol.transpose(-1, -2)
+        cov_mats[:, range_idx, range_idx] += self.var_eps
+        try:
+            dist = MultivariateNormal(q_m, cov_mats)
+        except:
+            print("NO")
+        latent = self.z_transformation(dist.rsample())
+        if self.return_dist:
+            return dist, latent
+        return q_m, cov_mats, latent
 
 
 class MeanOnlyEncoder(nn.Module):

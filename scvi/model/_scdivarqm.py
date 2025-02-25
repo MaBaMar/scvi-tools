@@ -5,17 +5,16 @@ from typing import Literal, Union, Callable, Optional, Sequence
 import scvi.nn
 import torch
 from anndata import AnnData
-from scvi.dataloaders._data_splitting import MixedRatioDataSplitter
 from scvi import settings
 from scvi.data._constants import _MODEL_NAME_KEY, _SETUP_ARGS_KEY, _SCVI_VERSION_KEY
 from scvi.dataloaders import SemiSupervisedDataLoader
+from scvi.dataloaders._data_splitting import MixedRatioDataSplitter
 from scvi.model import SCDIVA
 from scvi.model._utils import parse_device_args
 from scvi.model.base import ArchesMixin, BaseModelClass
 from scvi.model.base._archesmixin import _get_loaded_data
 from scvi.model.base._utils import _validate_var_names, _initialize_model
 from scvi.module._diva_rqm import RQMDiva
-from scvi.nn._base_components import FCLayers
 from scvi.utils._docstrings import devices_dsp
 from tqdm import tqdm
 
@@ -117,6 +116,7 @@ class ScDiVarQM(SCDIVA, ArchesMixin):
             **registry[_SETUP_ARGS_KEY]
         )
         attr_dict['init_params_']['kwargs']['kwargs'].update({'use_ratio_data_splitter': use_ratio_data_splitter})
+        # attr_dict['init_params_']['kwargs']['kwargs'].update({'beta_y': 1})
         model: ScDiVarQM = _initialize_model(cls, adata, attr_dict)
         adata_manager = model.get_anndata_manager(adata, required=True)
         version_split = adata_manager.registry[_SCVI_VERSION_KEY].split(".")
@@ -207,6 +207,7 @@ class ScDiVarQM(SCDIVA, ArchesMixin):
                 "Please raise an issue on github if you need it."
             )
 
+
 def _process_layer(layer: torch.nn.Sequential, freeze_grads: bool, freeze_batchnorm: bool, freeze_dropout: bool):
     layer_components: list[torch.nn.Module] = [*layer.children()]
     layer_components[0].requires_grad_(not freeze_grads)
@@ -215,7 +216,8 @@ def _process_layer(layer: torch.nn.Sequential, freeze_grads: bool, freeze_batchn
     if freeze_dropout:
         layer_components[-1].p = 0
 
-def _set_module_freeze_state(mod: scvi.nn.Encoder|scvi.nn.DecoderSCVI,
+
+def _set_module_freeze_state(mod: scvi.nn.Encoder | scvi.nn.DecoderSCVI,
                              freeeze_gradients: bool,
                              apply_scArches: bool,
                              freeze_batchnorm: bool,
@@ -226,7 +228,7 @@ def _set_module_freeze_state(mod: scvi.nn.Encoder|scvi.nn.DecoderSCVI,
     for child in mod.children():
         if isinstance(child, scvi.nn.FCLayers):
             layers = child.fc_layers
-            if apply_scArches: # only call function if necessary
+            if apply_scArches:  # only call function if necessary
                 child.set_online_update_hooks()
                 _process_layer(layers[0], False, freeze_batchnorm, freeze_dropout)
                 layers = layers[1:]
@@ -234,6 +236,7 @@ def _set_module_freeze_state(mod: scvi.nn.Encoder|scvi.nn.DecoderSCVI,
                 _process_layer(layer, freeeze_gradients, freeze_batchnorm, freeze_dropout)
         else:
             child.requires_grad_(not freeeze_gradients)
+
 
 def _set_params_online_update(
     module: RQMDiva,
