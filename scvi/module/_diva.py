@@ -745,11 +745,10 @@ class DIVA(BaseModuleClass):
         encodings = torch.eye(self.n_labels - 1, device=self.device)
         p_zy_y: torch.distributions.MultivariateNormal
         p_zy_y, _ = self.prior_zy_y_encoder(encodings)
-        probs = p_zy_y.log_prob(zy_x.unsqueeze(1))
-        return F.softmax(probs, dim=-1)
+        return p_zy_y.log_prob(zy_x.unsqueeze(1))
 
     def _pred_cls(self, zy_x: torch.Tensor) -> torch.Tensor:
-        return F.softmax(self.aux_y_zy_enc(zy_x), dim=-1)
+        return self.aux_y_zy_enc(zy_x)
 
     def init_ce_weight_y(self, adata: AnnData, indices, label_key: str):
         """

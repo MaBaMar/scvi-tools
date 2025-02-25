@@ -104,7 +104,7 @@ class RQMDiva(DIVA):
         zy_x_unlabeled = zy_x[has_no_label]
         with torch.no_grad():
             self.eval()  # TODO: analyze impact
-            probs = self._pred_func(zy_x_unlabeled)
+            probs = F.softmax(self._pred_func(zy_x_unlabeled), dim=-1)
             self.train()  # TODO: analyze impact
         p_y_zy = torch.distributions.Categorical(probs)
         y_pseudo = probs.argmax(dim=-1).view(-1, 1)
