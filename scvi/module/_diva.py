@@ -749,7 +749,7 @@ class DIVA(BaseModuleClass):
         return F.softmax(probs, dim=-1)
 
     def _pred_cls(self, zy_x: torch.Tensor) -> torch.Tensor:
-        return F.softmax(self.aux_y_zy_enc(zy_x), dim=-1)
+        return self.aux_y_zy_enc(zy_x)
 
     def init_ce_weight_y(self, adata: AnnData, indices, label_key: str):
         """
