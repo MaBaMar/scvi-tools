@@ -697,7 +697,7 @@ class DIVA(BaseModuleClass):
         dist, _ = self.posterior_zy_x_encoder(x)
 
         if use_mean_as_sample:
-            probs = F.softmax(predictor_fn(dist.mean), dim=-1)
+            probs = predictor_fn(dist.mean)
         else:
             pred_avgs = torch.zeros((n_samples, x.shape[0], self.n_labels - 1))
             for i in range(n_samples):
@@ -746,7 +746,7 @@ class DIVA(BaseModuleClass):
         encodings = torch.eye(self.n_labels - 1, device=self.device)
         p_zy_y: torch.distributions.MultivariateNormal
         p_zy_y, _ = self.prior_zy_y_encoder(encodings)
-        return torch.exp(p_zy_y.log_prob(zy_x.unsqueeze(1)))
+        return p_zy_y.log_prob(zy_x.unsqueeze(1))
 
     def _pred_cls(self, zy_x: torch.Tensor) -> torch.Tensor:
         return self.aux_y_zy_enc(zy_x)
