@@ -540,7 +540,7 @@ class DIVA(BaseModuleClass):
         d_hat = self.aux_d_zd_enc(zd_x) if self._use_batch_classifier else None
         # """
         if self._use_celltype_classifier:
-            y_hat = self._pred_cls(zy_x)
+            y_hat = self.aux_y_zy_enc(zy_x)
         elif not self._unsupervised:
             y_hat = self._pred_prior(zy_x)
         else:
