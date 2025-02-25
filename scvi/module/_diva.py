@@ -697,11 +697,11 @@ class DIVA(BaseModuleClass):
         dist, _ = self.posterior_zy_x_encoder(x)
 
         if use_mean_as_sample:
-            probs = F.softmax(predictor_fn(dist.mean))
+            probs = F.softmax(predictor_fn(dist.mean), dim=-1)
         else:
             pred_avgs = torch.zeros((n_samples, x.shape[0], self.n_labels - 1))
             for i in range(n_samples):
-                y_pred = F.softmax(predictor_fn(dist.sample()))
+                y_pred = F.softmax(predictor_fn(dist.sample()), dim=-1)
                 pred_avgs[i] = y_pred
             probs = torch.mean(pred_avgs, dim=0)
         return torch.argmax(probs, dim=1)
