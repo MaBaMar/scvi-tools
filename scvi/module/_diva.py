@@ -76,6 +76,7 @@ class DIVA(BaseModuleClass):
         library_log_vars: Optional[np.ndarray] = None,
         extra_encoder_kwargs: Optional[dict] = None,
         extra_decoder_kwargs: Optional[dict] = None,
+        **kwargs
     ):
 
         """
@@ -540,7 +541,7 @@ class DIVA(BaseModuleClass):
         d_hat = self.aux_d_zd_enc(zd_x) if self._use_batch_classifier else None
         # """
         if self._use_celltype_classifier:
-            y_hat = self.aux_y_zy_enc(zy_x)
+            y_hat = self._pred_cls(zy_x)
         elif not self._unsupervised:
             y_hat = self._pred_prior(zy_x)
         else:
@@ -745,7 +746,7 @@ class DIVA(BaseModuleClass):
         encodings = torch.eye(self.n_labels - 1, device=self.device)
         p_zy_y: torch.distributions.MultivariateNormal
         p_zy_y, _ = self.prior_zy_y_encoder(encodings)
-        return p_zy_y.log_prob(zy_x.unsqueeze(1))
+        return torch.exp(p_zy_y.log_prob(zy_x.unsqueeze(1)))
 
     def _pred_cls(self, zy_x: torch.Tensor) -> torch.Tensor:
         return self.aux_y_zy_enc(zy_x)
