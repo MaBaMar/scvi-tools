@@ -337,9 +337,9 @@ class SCDIVA(RNASeqMixin, VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
 
         if max_epochs is None:
             if data_module is None:
-                max_epochs = get_max_epochs_heuristic(self.adata.n_obs)/4 # TODO: revert
+                max_epochs = get_max_epochs_heuristic(self.adata.n_obs)//4 # TODO: revert
             elif hasattr(data_module, "n_obs"):
-                max_epochs = get_max_epochs_heuristic(data_module.n_obs)/4 # TODO: revert
+                max_epochs = get_max_epochs_heuristic(data_module.n_obs)//4 # TODO: revert
             else:
                 raise ValueError(
                     "If `data_module` does not have `n_obs` attribute, `max_epochs` must be passed "
