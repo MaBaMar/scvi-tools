@@ -15,7 +15,7 @@ from scvi import REGISTRY_KEYS
 from scvi._types import Tunable
 from scvi.distributions import ZeroInflatedNegativeBinomial, NegativeBinomial, Poisson
 from scvi.module.base import BaseModuleClass, LossOutput, auto_move_data
-from scvi.nn import Encoder, one_hot, MeanOnlyEncoder, RQMDecoder, CholeskyCovEncoder
+from scvi.nn import Encoder, one_hot, MeanOnlyEncoder, RQMDecoder, CholeskyCovEncoder, DiagMultEncoder
 from sklearn.utils.class_weight import compute_class_weight
 from torch import nn
 from torch.distributions import Normal, kl_divergence as kl, MultivariateNormal, register_kl
